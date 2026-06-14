@@ -417,7 +417,8 @@
       "position": "Reise-/Verpflegung-/Unterkunftsspesen",
       "detail": "Reise / Verpflegung /Unterkunft, CHF 200 / PAX / Mt.",
       "unitMonth": null,
-      "type": "var",
+      "type": "perHead",
+      "ratePerHead": 200,
       "costY1": 33600,
       "costY2": 40800,
       "costY3": 40800
@@ -427,7 +428,8 @@
       "position": "Kommunikationspauschale",
       "detail": "Telefon / Laptop, CHF 100 / PAX / Mt.",
       "unitMonth": null,
-      "type": "fix",
+      "type": "perHead",
+      "ratePerHead": 100,
       "costY1": 16800,
       "costY2": 20400,
       "costY3": 20400

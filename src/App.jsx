@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import planData from "./data/finanzierungsplan20260614.json";
 import { calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
-import { calcMonthlySachkosten, calcReserveMonthly } from "./lib/sachkosten.js";
+import { calcMonthlySachkosten, calcReserveMonthly, calcYearlyPerHeadCost, isPerHeadItem } from "./lib/sachkosten.js";
 import {
   cacheScenariosLocally,
   fetchScenarios,
@@ -496,8 +496,10 @@ function App() {
       const cashwirksameEinnahmen = lizenzCashInflow + sponsoringProMonat;
 
       const personnel = calcMonthlyPersonnel(roles, month, sozialabgabenProzent);
-      const { total: sachkostenBase } = calcMonthlySachkosten(sachkostenItems, month);
-    const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem);
+      const { total: sachkostenBase, breakdown } = calcMonthlySachkosten(sachkostenItems, month, {
+        headSum: personnel.headSum,
+      });
+      const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem, breakdown);
       const sachkosten = sachkostenBase + reserve;
 
       const aufwandOhneGewinnsteuer = personnel.personalkosten + sachkosten;
@@ -524,6 +526,7 @@ function App() {
         sachkosten,
         gewinnsteuer,
         fteSum: personnel.fteSum,
+        headSum: personnel.headSum,
         spezialtopfKosten,
         fundingInflow,
         sponsoringProMonat,
@@ -806,6 +809,28 @@ function App() {
 
     return results;
   }, [simulation, sachkostenItems]);
+
+  const headcountByYear = useMemo(() => {
+    const headSumAtMonth = (m) => calcMonthlyPersonnel(roles, m, sozialabgabenProzent).headSum;
+    return [1, 2, 3].map((year) => {
+      const startM = (year - 1) * 12 + 1;
+      const endM = year * 12;
+      let sum = 0;
+      for (let m = startM; m <= endM; m += 1) sum += headSumAtMonth(m);
+      return { year, avg: sum / 12, end: headSumAtMonth(endM) };
+    });
+  }, [roles, sozialabgabenProzent]);
+
+  const perHeadAnnualCosts = useMemo(() => {
+    const headSumAtMonth = (m) => calcMonthlyPersonnel(roles, m, sozialabgabenProzent).headSum;
+    const map = {};
+    sachkostenItems.filter(isPerHeadItem).forEach((item) => {
+      [1, 2, 3].forEach((year) => {
+        map[`${item.id}-y${year}`] = calcYearlyPerHeadCost(sachkostenItems, item.id, year, headSumAtMonth);
+      });
+    });
+    return map;
+  }, [roles, sachkostenItems, sozialabgabenProzent]);
 
   const costValidation = useMemo(() => {
     const years = [1, 2, 3];
@@ -1289,7 +1314,15 @@ Zur Absicherung wurden drei Szenarien modelliert:
           {/* Card 2: Personalplan */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-2">Personalplan</h2>
-            <p className="text-xs text-gray-600 mb-4">17 Rollen · expliziter Monatseintritt · Mt. pro GJ (GJ4 = GJ3)</p>
+            <p className="text-xs text-gray-600 mb-4">17 Rollen · Heads → Headcount · Spesen/Telko pro Kopf</p>
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {headcountByYear.map((h) => (
+                <div key={h.year} className="border border-black p-2 bg-[#F5F5F5] text-xs">
+                  <span className="font-bold">GJ{h.year} Headcount</span>
+                  <div className="font-mono">Ø {h.avg.toFixed(1)} · Ende {h.end}</div>
+                </div>
+              ))}
+            </div>
             <div className="grid grid-cols-3 gap-2 mb-4">
               {costValidation.map((v) => (
                 <div key={v.year} className="border border-black p-2 bg-[#F5F5F5] text-xs">
@@ -1308,6 +1341,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
                     <th className="p-2 border-r border-black font-bold">Position</th>
                     <th className="p-2 border-r border-black font-bold">Detail</th>
                     <th className="p-2 border-r border-black font-bold w-20">Salär/Mt.</th>
+                    <th className="p-2 border-r border-black font-bold w-12">Heads</th>
                     <th className="p-2 border-r border-black font-bold w-14">FTE</th>
                     <th className="p-2 border-r border-black font-bold w-16">Start</th>
                     <th className="p-2 border-r border-black font-bold w-14">Mt.GJ1</th>
@@ -1322,6 +1356,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
                       <td className="p-1 border-r border-black font-sans text-[10px]">{role.detail}</td>
                       {[
                         ["salaryMonth", 500],
+                        ["head", 1],
                         ["fte", 0.1],
                         ["startMonth", 1],
                         ["monthsY1", 1],
@@ -1384,23 +1419,57 @@ Zur Absicherung wurden drei Szenarien modelliert:
                       <td className="p-2 border-r border-black font-sans">
                         <span className="font-semibold text-xs block">{item.position}</span>
                         <span className="text-[10px] text-gray-500">{item.detail}</span>
+                        {isPerHeadItem(item) && (
+                          <label className="flex items-center gap-1 mt-1 text-[10px]">
+                            <span>CHF/PAX/Mt.</span>
+                            <input
+                              type="number"
+                              className="w-16 border border-black bg-white px-1 py-0.5 text-[11px] font-semibold"
+                              value={item.ratePerHead ?? 0}
+                              step={10}
+                              min={0}
+                              onChange={(e) => updateSachkosten(item.id, "ratePerHead", clampNumber(Number(e.target.value)))}
+                            />
+                          </label>
+                        )}
                       </td>
-                      {["costY1", "costY2", "costY3"].map((field) => (
-                        <td key={field} className="p-1 border-r border-black">
-                          <input
-                            type="number"
-                            className="w-full border border-black bg-white px-2 py-1 text-[11px] font-semibold"
-                            value={item[field] ?? 0}
-                            step={500}
-                            min={0}
-                            onChange={(e) => updateSachkosten(item.id, field, clampNumber(Number(e.target.value)))}
-                          />
-                        </td>
-                      ))}
-                      <td className="p-2 border-r border-black text-right text-gray-500 font-semibold">
-                        {numberFormatter.format(item.costY4 ?? item.costY3 ?? 0)}
+                      {isPerHeadItem(item) ? (
+                        <>
+                          {[1, 2, 3].map((year) => (
+                            <td key={year} className="p-2 border-r border-black text-right font-semibold bg-[#F8F4FF]">
+                              {numberFormatter.format(Math.round(perHeadAnnualCosts[`${item.id}-y${year}`] ?? 0))}
+                            </td>
+                          ))}
+                          <td className="p-2 border-r border-black text-right text-gray-500 font-semibold bg-[#F8F4FF]">
+                            {numberFormatter.format(Math.round(perHeadAnnualCosts[`${item.id}-y3`] ?? 0))}
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          {["costY1", "costY2", "costY3"].map((field) => (
+                            <td key={field} className="p-1 border-r border-black">
+                              <input
+                                type="number"
+                                className="w-full border border-black bg-white px-2 py-1 text-[11px] font-semibold"
+                                value={item[field] ?? 0}
+                                step={500}
+                                min={0}
+                                onChange={(e) => updateSachkosten(item.id, field, clampNumber(Number(e.target.value)))}
+                              />
+                            </td>
+                          ))}
+                          <td className="p-2 border-r border-black text-right text-gray-500 font-semibold">
+                            {numberFormatter.format(item.costY4 ?? item.costY3 ?? 0)}
+                          </td>
+                        </>
+                      )}
+                      <td className="p-2 text-[10px] uppercase font-bold text-center">
+                        {isPerHeadItem(item) ? (
+                          <span className="text-purple-700">perHead</span>
+                        ) : (
+                          item.type ?? "—"
+                        )}
                       </td>
-                      <td className="p-2 text-[10px] uppercase font-bold text-center">{item.type ?? "—"}</td>
                     </tr>
                   ))}
                   {reserveItem && (

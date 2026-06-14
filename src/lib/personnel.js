@@ -29,11 +29,13 @@ export const isRoleActive = (role, month) => {
 export const calcMonthlyPersonnel = (roles, month, sozialPct = 16) => {
   let bruttolohn = 0;
   let fteSum = 0;
+  let headSum = 0;
 
   for (const role of roles) {
     if (!isRoleActive(role, month)) continue;
     bruttolohn += (role.salaryMonth ?? 0) * (role.fte ?? 0);
     fteSum += role.fte ?? 0;
+    headSum += role.head ?? 0;
   }
 
   const sozialabgaben = bruttolohn * (sozialPct / 100);
@@ -42,6 +44,7 @@ export const calcMonthlyPersonnel = (roles, month, sozialPct = 16) => {
     sozialabgaben,
     personalkosten: bruttolohn + sozialabgaben,
     fteSum,
+    headSum,
   };
 };
 
