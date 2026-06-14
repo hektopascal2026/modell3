@@ -11,8 +11,14 @@ import {
   YAxis,
 } from "recharts";
 import planData from "./data/finanzierungsplan20260614.json";
-import { calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
-import { calcMonthlySachkosten, calcReserveMonthly, calcYearlyPerHeadCost, isPerHeadItem } from "./lib/sachkosten.js";
+import { calcMindestliquiditaet, calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
+import {
+  calcMonthlySachkosten,
+  calcReserveMonthly,
+  calcYearlyPerHeadCost,
+  calcYearlyReserveCost,
+  isPerHeadItem,
+} from "./lib/sachkosten.js";
 import {
   cacheScenariosLocally,
   fetchScenarios,
@@ -536,15 +542,11 @@ function App() {
 
     for (let i = 0; i < points.length; i += 1) {
       const m = points[i].month;
-      let loehneNaechste3 = 0;
-      for (let k = 1; k <= 3; k += 1) {
-        const future = Math.min(MONTHS, m + k);
-        loehneNaechste3 += personalkostenByMonth[future];
-      }
-      const mindestliquiditaet = RESERVE_CHF + loehneNaechste3;
+      const { personalkosten3Monate, mindestliquiditaet } = calcMindestliquiditaet(personalkostenByMonth, m, RESERVE_CHF);
       const liquiditaetspuffer = points[i].cashbestand - mindestliquiditaet;
       points[i].mindestliquiditaet = mindestliquiditaet;
       points[i].liquiditaetspuffer = liquiditaetspuffer;
+      points[i].personalkosten3Monate = personalkosten3Monate;
     }
 
     return points;
@@ -831,6 +833,16 @@ function App() {
     });
     return map;
   }, [roles, sachkostenItems, sozialabgabenProzent]);
+
+  const reserveAnnualCosts = useMemo(() => {
+    if (!reserveItem) return {};
+    const headSumAtMonth = (m) => calcMonthlyPersonnel(roles, m, sozialabgabenProzent).headSum;
+    const map = {};
+    [1, 2, 3].forEach((year) => {
+      map[`y${year}`] = calcYearlyReserveCost(sachkostenItems, year, headSumAtMonth, reserveItem);
+    });
+    return map;
+  }, [roles, sachkostenItems, sozialabgabenProzent, reserveItem]);
 
   const costValidation = useMemo(() => {
     const years = [1, 2, 3];
@@ -1474,23 +1486,38 @@ Zur Absicherung wurden drei Szenarien modelliert:
                   ))}
                   {reserveItem && (
                     <tr className="border-b-2 border-black bg-[#FFF9E6]">
-                      <td className="p-2 border-r border-black font-sans font-semibold text-xs">{reserveItem.position}</td>
-                      {["costY1", "costY2", "costY3"].map((field) => (
-                        <td key={field} className="p-1 border-r border-black">
-                          <input
-                            type="number"
-                            className="w-full border border-black bg-white px-2 py-1 text-[11px] font-semibold"
-                            value={reserveItem[field] ?? 0}
-                            step={500}
-                            min={0}
-                            onChange={(e) => updateSachkosten(reserveItem.id, field, clampNumber(Number(e.target.value)))}
-                          />
+                      <td className="p-2 border-r border-black font-sans">
+                        <span className="font-semibold text-xs block">{reserveItem.position}</span>
+                        <span className="text-[10px] text-gray-500">{reserveItem.detail}</span>
+                      </td>
+                      {[1, 2, 3].map((year) => (
+                        <td key={year} className="p-2 border-r border-black text-right font-semibold bg-[#FFF3CC]">
+                          {numberFormatter.format(Math.round(reserveAnnualCosts[`y${year}`] ?? 0))}
                         </td>
                       ))}
-                      <td className="p-2 border-r border-black text-right text-gray-500 font-semibold">
-                        {numberFormatter.format(reserveItem.costY4 ?? reserveItem.costY3 ?? 0)}
+                      <td className="p-2 border-r border-black text-right text-gray-500 font-semibold bg-[#FFF3CC]">
+                        {numberFormatter.format(Math.round(reserveAnnualCosts.y3 ?? 0))}
                       </td>
-                      <td className="p-2 text-[10px] uppercase font-bold text-center">10%</td>
+                      <td className="p-2 text-center">
+                        <label className="inline-flex items-center gap-1 text-[10px] font-bold uppercase">
+                          <input
+                            type="number"
+                            className="w-14 border border-black bg-white px-1 py-0.5 text-[11px] font-semibold text-center"
+                            value={Math.round((reserveItem.unitMonth ?? 0.1) * 1000) / 10}
+                            step={0.5}
+                            min={0}
+                            max={100}
+                            onChange={(e) =>
+                              updateSachkosten(
+                                reserveItem.id,
+                                "unitMonth",
+                                clampPercent(clampNumber(Number(e.target.value))) / 100
+                              )
+                            }
+                          />
+                          <span>%</span>
+                        </label>
+                      </td>
                     </tr>
                   )}
                 </tbody>
@@ -1570,7 +1597,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[16px] font-bold text-black">Finanzen & Liquidität</h2>
             <p className="text-sm font-normal text-black">
-              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Löhne für 3 Monate voraus). Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
+              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Personalkosten der nächsten 3 Monate inkl. Sozialabgaben). Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
             </p>
             <div className="mt-4 h-[34rem] 2xl:h-[38rem]">
               <ResponsiveContainer width="100%" height="100%">
@@ -2332,7 +2359,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
             <p className="font-semibold">Anmerkungen</p>
             <p>
               <span className="font-semibold">Liquiditäts-Floor:</span> Im Modell ist der Floor
-              <span className="font-semibold"> 100&apos;000 CHF + 3 Monatslöhne</span>. Sachkosten sind dabei nicht enthalten.
+              <span className="font-semibold"> 100&apos;000 CHF + Personalkosten der nächsten 3 Monate</span> ab jeweiligem Monat
+              (Bruttolohn + Sozialabgaben, nur dann aktive Rollen). Sachkosten sind dabei nicht enthalten.
             </p>
             <p>
               <span className="font-semibold">Preislogik:</span> Kunden zahlen im ersten Vertragsjahr den Jahr-1-Preis, im zweiten

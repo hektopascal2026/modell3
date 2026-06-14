@@ -26,6 +26,23 @@ export const isRoleActive = (role, month) => {
   return false;
 };
 
+export const LIQUIDITY_RESERVE_CHF = 100_000;
+export const LIQUIDITY_PAYROLL_MONTHS = 3;
+
+/** Mindestliquidität an Monat m: Fixpuffer + Personalkosten (Lohn + Sozialabgaben) der nächsten 3 Monate ab m. */
+export const calcMindestliquiditaet = (personalkostenByMonth, month, reserveChf = LIQUIDITY_RESERVE_CHF) => {
+  let personalkosten3Monate = 0;
+  for (let k = 0; k < LIQUIDITY_PAYROLL_MONTHS; k += 1) {
+    const target = month + k;
+    if (target >= personalkostenByMonth.length) break;
+    personalkosten3Monate += personalkostenByMonth[target] ?? 0;
+  }
+  return {
+    personalkosten3Monate,
+    mindestliquiditaet: reserveChf + personalkosten3Monate,
+  };
+};
+
 export const calcMonthlyPersonnel = (roles, month, sozialPct = 16) => {
   let bruttolohn = 0;
   let fteSum = 0;

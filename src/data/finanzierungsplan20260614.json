@@ -520,10 +520,7 @@
       "position": "Reserve",
       "detail": "Prozentsatz des Sach- und Dienstleistungsaufwands, exkl. Freelance (z.B. Content-Lizenzen, Mietkaution, Bankgarantien, Betriebsanlass, Kundengeschenke)",
       "unitMonth": 0.1,
-      "type": "var",
-      "costY1": 40280,
-      "costY2": 35510,
-      "costY3": 39210
+      "type": "prozent"
     }
   ],
   "taxes": {

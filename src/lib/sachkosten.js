@@ -46,11 +46,8 @@ export const calcMonthlySachkosten = (items, month, { headSum = 0, excludeIds = 
   return { total, breakdown };
 };
 
-export const calcReserveMonthly = (items, month, reserveItem, breakdown) => {
+export const calcReserveMonthly = (_items, _month, reserveItem, breakdown) => {
   if (!reserveItem) return 0;
-  const year = yearByMonth(month);
-  const override = getCostForYear(reserveItem, year);
-  if (override > 0) return override / 12;
 
   const monthlyBase = Object.entries(breakdown)
     .filter(([id]) => id !== "sach-1")
@@ -58,6 +55,20 @@ export const calcReserveMonthly = (items, month, reserveItem, breakdown) => {
 
   const rate = reserveItem.unitMonth ?? 0.1;
   return monthlyBase * rate;
+};
+
+export const calcYearlyReserveCost = (items, year, headSumByMonth, reserveItem) => {
+  const startM = (year - 1) * 12 + 1;
+  const endM = year * 12;
+  let total = 0;
+
+  for (let m = startM; m <= endM; m += 1) {
+    const headSum = headSumByMonth ? headSumByMonth(m) : 0;
+    const { breakdown } = calcMonthlySachkosten(items, m, { headSum });
+    total += calcReserveMonthly(items, m, reserveItem, breakdown);
+  }
+
+  return total;
 };
 
 export const calcYearlySachkosten = (items, year, headSumByMonth) => {
