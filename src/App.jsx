@@ -317,10 +317,8 @@ function App() {
       const cashwirksameEinnahmen = lizenzCashInflow + sponsoringProMonat;
 
       const personnel = calcMonthlyPersonnel(roles, month, sozialabgabenProzent);
-      const { total: sachkostenBase, breakdown } = calcMonthlySachkosten(sachkostenItems, month, {
-        fteSum: personnel.fteSum,
-      });
-      const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem, breakdown);
+      const { total: sachkostenBase } = calcMonthlySachkosten(sachkostenItems, month);
+    const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem);
       const sachkosten = sachkostenBase + reserve;
 
       const aufwandOhneGewinnsteuer = personnel.personalkosten + sachkosten;
@@ -399,7 +397,9 @@ function App() {
   const month36 = simulation[35] ?? month48;
 
   const breakEvenMonat = useMemo(() => {
-    const hit = simulation.find((p) => p.gesamteinnahmen >= p.gesamtausgaben);
+    const hit = simulation.find(
+      (p) => p.gesamteinnahmen >= p.personalkosten + p.sachkosten + p.spezialtopfKosten
+    );
     return hit ? hit.month : null;
   }, [simulation]);
   const breakEvenPoint = breakEvenMonat != null ? simulation[breakEvenMonat - 1] : null;
@@ -645,7 +645,10 @@ function App() {
   const dummyData = useMemo(() => {
     // 1. Ratio
     const totalPers = simulation.reduce((sum, p) => sum + p.personalkosten, 0);
-    const totalSach = simulation.reduce((sum, p) => sum + p.gesamtausgaben - p.personalkosten - p.spezialtopfKosten, 0);
+    const totalSach = simulation.reduce(
+      (sum, p) => sum + p.sachkosten + p.gewinnsteuer + p.spezialtopfKosten,
+      0
+    );
     const persRatio = totalPers + totalSach > 0 ? Math.round((totalPers / (totalPers + totalSach)) * 100) : 80;
     const sachRatio = 100 - persRatio;
 
@@ -1681,7 +1684,10 @@ Zur Absicherung wurden drei Szenarien modelliert:
                         Sozialabgaben & Vorsorge ({clampPercent(sozialabgabenProzent).toFixed(1)}%): {currencyFormatter.format(breakEvenPoint.sozialabgaben)} / Monat
                       </div>
                     </div>
-                    <div>Sachkosten: {currencyFormatter.format(breakEvenPoint.gesamtausgaben - breakEvenPoint.personalkosten - breakEvenPoint.spezialtopfKosten)} / Monat</div>
+                    <div>Sachkosten: {currencyFormatter.format(breakEvenPoint.sachkosten)} / Monat</div>
+                    {breakEvenPoint.gewinnsteuer > 0 && (
+                      <div>Gewinnsteuer: {currencyFormatter.format(breakEvenPoint.gewinnsteuer)} / Monat</div>
+                    )}
                     {breakEvenPoint.spezialtopfKosten > 0 && (
                       <div className="text-[12px] text-gray-600 pl-4 border-l-2 border-black ml-1 mt-0.5 font-mono">
                         Spezialtopf-Tranche: {currencyFormatter.format(breakEvenPoint.spezialtopfKosten)} / Monat (bis Monat 36)
@@ -1692,7 +1698,9 @@ Zur Absicherung wurden drei Szenarien modelliert:
                 </div>
                 <hr className="border-black border-dashed" />
                 <div className="font-bold text-[#00aa00] text-[15px]">
-                  Netto-Ergebnis (Einnahmen - Ausgaben): +{currencyFormatter.format(breakEvenPoint.gesamteinnahmen - breakEvenPoint.gesamtausgaben)} / Monat
+                  Netto-Ergebnis (Einnahmen − operative Ausgaben): +{currencyFormatter.format(
+                    breakEvenPoint.gesamteinnahmen - breakEvenPoint.personalkosten - breakEvenPoint.sachkosten - breakEvenPoint.spezialtopfKosten
+                  )} / Monat
                 </div>
               </div>
             ) : (
@@ -2106,8 +2114,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
           <div>
             <p className="font-semibold">Vereinfachungen</p>
             <p>
-              <span className="font-semibold">Null-FTE = niedrige Sachkosten:</span> Bei 80/20 sinken Sachkosten mit den FTEs mit.
-              Feste Startkosten (z. B. Recht, Setup, Lizenzen) sind nicht automatisch drin.
+              <span className="font-semibold">Sachkosten:</span> Pro GJ als Jahresbetrag editierbar (GJ1–GJ3). GJ4 = GJ3.
+              Kapitalsteuer fix in der Sachkosten-Tabelle; Gewinnsteuer dynamisch bei positivem Monatsergebnis.
             </p>
             <p>
               <span className="font-semibold">Kein Blended ARPU:</span> Das Modell nutzt feste Preise je Kohortenalter statt eines

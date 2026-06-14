@@ -15,7 +15,7 @@ const isEinmalig = (item) => {
 };
 
 /** Monthly sachkosten from per-year totals (GJ1–GJ3 editable; GJ4 = GJ3). */
-export const calcMonthlySachkosten = (items, month, { fteSum = 0, excludeIds = [] } = {}) => {
+export const calcMonthlySachkosten = (items, month, { excludeIds = [] } = {}) => {
   const year = yearByMonth(month);
   const monthInYear = ((month - 1) % 12) + 1;
   let total = 0;
@@ -40,7 +40,7 @@ export const calcMonthlySachkosten = (items, month, { fteSum = 0, excludeIds = [
   return { total, breakdown };
 };
 
-export const calcReserveMonthly = (items, month, reserveItem, breakdown) => {
+export const calcReserveMonthly = (items, month, reserveItem) => {
   if (!reserveItem) return 0;
   const year = yearByMonth(month);
   const override = getCostForYear(reserveItem, year);
@@ -54,17 +54,15 @@ export const calcReserveMonthly = (items, month, reserveItem, breakdown) => {
   return (annualExclFreelance * rate) / 12;
 };
 
-export const calcYearlySachkosten = (items, year, fteByMonthFn) => {
+export const calcYearlySachkosten = (items, year) => {
   const startM = (year - 1) * 12 + 1;
   const endM = year * 12;
   let total = 0;
   const reserveItem = items.find((i) => i.id === "sach-23");
 
   for (let m = startM; m <= endM; m += 1) {
-    const { total: base, breakdown } = calcMonthlySachkosten(items, m, {
-      fteSum: fteByMonthFn ? fteByMonthFn(m) : 0,
-    });
-    const reserve = calcReserveMonthly(items, m, reserveItem, breakdown);
+    const { total: base } = calcMonthlySachkosten(items, m);
+    const reserve = calcReserveMonthly(items, m, reserveItem);
     total += base + reserve;
   }
   return total;
