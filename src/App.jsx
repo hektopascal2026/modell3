@@ -13,6 +13,13 @@ import {
 import planData from "./data/finanzierungsplan20260614.json";
 import { calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
 import { calcMonthlySachkosten, calcReserveMonthly } from "./lib/sachkosten.js";
+import {
+  cacheScenariosLocally,
+  fetchScenarios,
+  readLegacyLocalScenarios,
+  saveScenarios,
+  sortScenarioNames,
+} from "./lib/scenarioStore.js";
 
 const MONTHS = 48;
 const currencyFormatter = new Intl.NumberFormat("de-CH", {
@@ -180,6 +187,15 @@ function App() {
   const [gewinnsteuerRate, setGewinnsteuerRate] = useState(() => getStored("gewinnsteuerRate", DEFAULTS.gewinnsteuerRate));
   const [spezialtopf, setSpezialtopf] = useState(() => getStored("spezialtopf", DEFAULTS.spezialtopf));
 
+  const [scenarioMap, setScenarioMap] = useState({});
+  const [selectedScenario, setSelectedScenario] = useState("");
+  const [scenariosLoading, setScenariosLoading] = useState(true);
+  const [scenariosSaving, setScenariosSaving] = useState(false);
+  const [scenarioMeta, setScenarioMeta] = useState(null);
+  const [scenarioSource, setScenarioSource] = useState("");
+
+  const scenarioNames = useMemo(() => sortScenarioNames(scenarioMap), [scenarioMap]);
+
   const reserveItem = useMemo(() => sachkostenItems.find((i) => i.id === "sach-23"), [sachkostenItems]);
 
   const updateRole = (id, field, value) => {
@@ -202,6 +218,169 @@ function App() {
         return next;
       })
     );
+  };
+
+  const collectScenarioSnapshot = () => ({
+    seedBetrag,
+    seedMonat,
+    seriesABetrag,
+    seriesAMonat,
+    preSeedAfondPerdu,
+    preSeedBridge,
+    neueKundenJ1,
+    neueKundenJ2,
+    neueKundenJ3,
+    neueKundenJ4,
+    preisJ1,
+    preisAbJ2,
+    preisAbJ3,
+    verlaengerungNachJ1,
+    verlaengerungNachJ2,
+    verlaengerungNachJ3,
+    sponsoringJahr1,
+    sponsoringJahr2,
+    sponsoringJahr3,
+    sponsoringJahr4,
+    roles,
+    sachkostenItems,
+    sozialabgabenProzent,
+    gewinnsteuerRate,
+    spezialtopf,
+    savedAt: new Date().toISOString(),
+  });
+
+  const applyScenarioSnapshot = (data) => {
+    if (data.seedBetrag !== undefined) setSeedBetrag(data.seedBetrag);
+    if (data.seedMonat !== undefined) setSeedMonat(data.seedMonat);
+    if (data.seriesABetrag !== undefined) setSeriesABetrag(data.seriesABetrag);
+    if (data.seriesAMonat !== undefined) setSeriesAMonat(data.seriesAMonat);
+    if (data.preSeedAfondPerdu !== undefined) setPreSeedAfondPerdu(data.preSeedAfondPerdu);
+    if (data.preSeedBridge !== undefined) setPreSeedBridge(data.preSeedBridge);
+    if (data.neueKundenJ1 !== undefined) setNeueKundenJ1(data.neueKundenJ1);
+    if (data.neueKundenJ2 !== undefined) setNeueKundenJ2(data.neueKundenJ2);
+    if (data.neueKundenJ3 !== undefined) setNeueKundenJ3(data.neueKundenJ3);
+    if (data.neueKundenJ4 !== undefined) setNeueKundenJ4(data.neueKundenJ4);
+    if (data.preisJ1 !== undefined) setPreisJ1(data.preisJ1);
+    if (data.preisAbJ2 !== undefined) setPreisAbJ2(data.preisAbJ2);
+    if (data.preisAbJ3 !== undefined) setPreisAbJ3(data.preisAbJ3);
+    if (data.verlaengerungNachJ1 !== undefined) setVerlaengerungNachJ1(data.verlaengerungNachJ1);
+    if (data.verlaengerungNachJ2 !== undefined) setVerlaengerungNachJ2(data.verlaengerungNachJ2);
+    if (data.verlaengerungNachJ3 !== undefined) setVerlaengerungNachJ3(data.verlaengerungNachJ3);
+    if (data.sponsoringJahr1 !== undefined) setSponsoringJahr1(data.sponsoringJahr1);
+    if (data.sponsoringJahr2 !== undefined) setSponsoringJahr2(data.sponsoringJahr2);
+    if (data.sponsoringJahr3 !== undefined) setSponsoringJahr3(data.sponsoringJahr3);
+    if (data.sponsoringJahr4 !== undefined) setSponsoringJahr4(data.sponsoringJahr4);
+    if (data.roles !== undefined) setRoles(data.roles);
+    if (data.sachkostenItems !== undefined) setSachkostenItems(normalizeSachkosten(data.sachkostenItems));
+    if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
+    if (data.gewinnsteuerRate !== undefined) setGewinnsteuerRate(data.gewinnsteuerRate);
+    if (data.spezialtopf !== undefined) setSpezialtopf(data.spezialtopf);
+  };
+
+  const refreshScenarios = async () => {
+    setScenariosLoading(true);
+    try {
+      const { scenarios, meta, source } = await fetchScenarios();
+      setScenarioMap(scenarios);
+      setScenarioMeta(meta);
+      setScenarioSource(source);
+      if (selectedScenario && !scenarios[selectedScenario]) {
+        setSelectedScenario("");
+      }
+    } finally {
+      setScenariosLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshScenarios();
+  }, []);
+
+  const persistScenario = async (name, snapshot) => {
+    const nextMap = { ...scenarioMap, [name]: snapshot };
+    let authorName = sessionStorage.getItem("hekto3_author");
+    if (!authorName) {
+      authorName = window.prompt("Dein Name (einmalig, für Protokoll):", "")?.trim() || "unbekannt";
+      sessionStorage.setItem("hekto3_author", authorName);
+    }
+    setScenariosSaving(true);
+    try {
+      const meta = await saveScenarios(nextMap, { authorName });
+      setScenarioMap(nextMap);
+      setScenarioMeta(meta);
+      setScenarioSource("remote");
+      setSelectedScenario(name);
+      return true;
+    } finally {
+      setScenariosSaving(false);
+    }
+  };
+
+  const handleSaveScenario = async () => {
+    let name = selectedScenario;
+    if (!name) {
+      name = window.prompt("Name für neues Szenario:", "Szenario 1")?.trim();
+    }
+    if (!name) return;
+
+    try {
+      await persistScenario(name, collectScenarioSnapshot());
+      alert(`Szenario «${name}» gespeichert (für alle Geräte).`);
+    } catch (error) {
+      cacheScenariosLocally({ ...scenarioMap, [name]: collectScenarioSnapshot() });
+      alert(`${error.message}\n\nLokal zwischengespeichert — Remote-Sync fehlgeschlagen.`);
+    }
+  };
+
+  const handleSaveScenarioAsNew = async () => {
+    const name = window.prompt("Name für neues Szenario:", "Szenario 1")?.trim();
+    if (!name) return;
+    if (scenarioMap[name] && !window.confirm(`«${name}» existiert bereits. Überschreiben?`)) return;
+
+    try {
+      await persistScenario(name, collectScenarioSnapshot());
+      alert(`Szenario «${name}» gespeichert (für alle Geräte).`);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const handleLoadScenario = () => {
+    if (!selectedScenario) {
+      alert("Bitte zuerst ein Szenario im Dropdown wählen.");
+      return;
+    }
+    const data = scenarioMap[selectedScenario];
+    if (!data) {
+      alert("Szenario nicht gefunden.");
+      return;
+    }
+    applyScenarioSnapshot(data);
+  };
+
+  const handleMigrateLegacyScenarios = async () => {
+    const legacy = readLegacyLocalScenarios();
+    const names = Object.keys(legacy);
+    if (names.length === 0) {
+      alert("Keine lokalen Alt-Szenarien (hekto3_templates) gefunden.");
+      return;
+    }
+    if (!window.confirm(`${names.length} lokale Szenarien ins Repo hochladen?`)) return;
+
+    const merged = { ...scenarioMap, ...legacy };
+    try {
+      const authorName = window.prompt("Dein Name:", "")?.trim() || "migration";
+      setScenariosSaving(true);
+      const meta = await saveScenarios(merged, { authorName });
+      setScenarioMap(merged);
+      setScenarioMeta(meta);
+      setScenarioSource("remote");
+      alert("Lokale Szenarien migriert.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setScenariosSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -719,76 +898,6 @@ function App() {
     };
   }, [simulation, guvData, roles, seedMonat, seriesAMonat, sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4, breakEvenMonat]);
 
-  const handleSaveTemplate = () => {
-    const name = window.prompt("Geben Sie einen Namen für das Template ein:", "Szenario 1");
-    if (!name) return;
-
-    const templates = JSON.parse(localStorage.getItem("hekto3_templates") || "{}");
-    const data = {
-      seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
-      preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
-      sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-      roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
-    };
-    templates[name] = data;
-    localStorage.setItem("hekto3_templates", JSON.stringify(templates));
-    alert(`Template "${name}" erfolgreich gespeichert!`);
-  };
-
-  const handleLoadTemplate = () => {
-    const templates = JSON.parse(localStorage.getItem("hekto3_templates") || "{}");
-    const names = Object.keys(templates);
-    if (names.length === 0) {
-      alert("Keine gespeicherten Templates gefunden!");
-      return;
-    }
-
-    const name = window.prompt(
-      `Verfügbare Templates:\n- ${names.join("\n- ")}\n\nBitte geben Sie den genauen Namen des zu ladenden Templates ein:`,
-      names[0]
-    );
-    if (!name) return;
-
-    const data = templates[name];
-    if (!data) {
-      alert("Template nicht gefunden!");
-      return;
-    }
-
-    if (data.seedBetrag !== undefined) setSeedBetrag(data.seedBetrag);
-    if (data.seedMonat !== undefined) setSeedMonat(data.seedMonat);
-    if (data.seriesABetrag !== undefined) setSeriesABetrag(data.seriesABetrag);
-    if (data.seriesAMonat !== undefined) setSeriesAMonat(data.seriesAMonat);
-    if (data.preSeedAfondPerdu !== undefined) setPreSeedAfondPerdu(data.preSeedAfondPerdu);
-    if (data.preSeedBridge !== undefined) setPreSeedBridge(data.preSeedBridge);
-    
-    if (data.neueKundenJ1 !== undefined) setNeueKundenJ1(data.neueKundenJ1);
-    if (data.neueKundenJ2 !== undefined) setNeueKundenJ2(data.neueKundenJ2);
-    if (data.neueKundenJ3 !== undefined) setNeueKundenJ3(data.neueKundenJ3);
-    if (data.neueKundenJ4 !== undefined) setNeueKundenJ4(data.neueKundenJ4);
-    
-    if (data.preisJ1 !== undefined) setPreisJ1(data.preisJ1);
-    if (data.preisAbJ2 !== undefined) setPreisAbJ2(data.preisAbJ2);
-    if (data.preisAbJ3 !== undefined) setPreisAbJ3(data.preisAbJ3);
-    
-    if (data.verlaengerungNachJ1 !== undefined) setVerlaengerungNachJ1(data.verlaengerungNachJ1);
-    if (data.verlaengerungNachJ2 !== undefined) setVerlaengerungNachJ2(data.verlaengerungNachJ2);
-    if (data.verlaengerungNachJ3 !== undefined) setVerlaengerungNachJ3(data.verlaengerungNachJ3);
-    
-    if (data.sponsoringJahr1 !== undefined) setSponsoringJahr1(data.sponsoringJahr1);
-    if (data.sponsoringJahr2 !== undefined) setSponsoringJahr2(data.sponsoringJahr2);
-    if (data.sponsoringJahr3 !== undefined) setSponsoringJahr3(data.sponsoringJahr3);
-    if (data.sponsoringJahr4 !== undefined) setSponsoringJahr4(data.sponsoringJahr4);
-    
-    if (data.roles !== undefined) setRoles(data.roles);
-    if (data.sachkostenItems !== undefined) setSachkostenItems(normalizeSachkosten(data.sachkostenItems));
-    if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
-    if (data.gewinnsteuerRate !== undefined) setGewinnsteuerRate(data.gewinnsteuerRate);
-    if (data.spezialtopf !== undefined) setSpezialtopf(data.spezialtopf);
-
-    alert(`Template "${name}" erfolgreich geladen!`);
-  };
-
   const handleCopyText = () => {
     const text = `9. Finanzplan (Zahlenteil)
 
@@ -873,31 +982,81 @@ Zur Absicherung wurden drei Szenarien modelliert:
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-4 p-4 2xl:px-8">
       {/* Header */}
-      <header className="flex items-center justify-between border-2 border-black bg-white p-4">
+      <header className="flex flex-col gap-3 border-2 border-black bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-[20px] font-bold text-black">Finanzmodell Hektopascal — Modell 3</h1>
           <p className="text-xs font-normal text-black mt-1">Rollenbasierte Planung · 48 Monate (CHF) · Stand 13.06.2026</p>
+          {scenarioMeta?.updatedAt && (
+            <p className="text-[10px] text-gray-500 mt-1 font-mono">
+              Szenarien: {scenarioMeta.updatedBy ?? "—"} · {new Date(scenarioMeta.updatedAt).toLocaleString("de-CH")}
+              {scenarioSource ? ` · Quelle: ${scenarioSource}` : ""}
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="grid gap-1 min-w-[200px]">
+            <span className="text-[10px] font-bold uppercase text-black">Szenario</span>
+            <select
+              className="border-2 border-black bg-white px-2 py-2 text-sm font-semibold text-black"
+              value={selectedScenario}
+              onChange={(event) => setSelectedScenario(event.target.value)}
+              disabled={scenariosLoading}
+            >
+              <option value="">— Szenario wählen —</option>
+              {scenarioNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
-            onClick={handleSaveTemplate}
-            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
-            title="Aktuelle Werte als Template speichern"
-          >
-            Speichern
-          </button>
-          <button
-            type="button"
-            onClick={handleLoadTemplate}
-            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
-            title="Gespeichertes Template laden"
+            onClick={handleLoadScenario}
+            disabled={!selectedScenario || scenariosLoading}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Ausgewähltes Szenario laden"
           >
             Laden
           </button>
           <button
             type="button"
-            onClick={handleReset}
+            onClick={handleSaveScenario}
+            disabled={scenariosSaving}
+            className="border-2 border-black bg-[#FF6B6B] px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer disabled:opacity-40"
+            title={selectedScenario ? "Ausgewähltes Szenario überschreiben" : "Neues Szenario speichern"}
+          >
+            {scenariosSaving ? "Speichert…" : "Speichern"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveScenarioAsNew}
+            disabled={scenariosSaving}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer disabled:opacity-40"
+            title="Unter neuem Namen speichern"
+          >
+            Neu…
+          </button>
+          <button
+            type="button"
+            onClick={refreshScenarios}
+            disabled={scenariosLoading}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer disabled:opacity-40"
+            title="Szenarien vom Server neu laden"
+          >
+            ↻
+          </button>
+          {Object.keys(readLegacyLocalScenarios()).length > 0 && (
+            <button
+              type="button"
+              onClick={handleMigrateLegacyScenarios}
+              className="border-2 border-black bg-yellow-100 px-3 py-2 text-xs font-bold text-black"
+              title="Alte lokale Szenarien ins Repo hochladen"
+            >
+              Lokal → Cloud
+            </button>
+          )}
+          <button
             className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
             title="Alle Werte auf Standard zurücksetzen"
           >

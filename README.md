@@ -25,7 +25,20 @@ npm run build
 npm run preview  # → http://localhost:4173/modell3/
 ```
 
-GitHub Pages: [hektopascal2026.github.io/modell3](https://hektopascal2026.github.io/modell3/)
+## Szenarien (geräteübergreifend)
+
+Szenarien werden in `public/scenarios/scenarios.json` im GitHub-Repo gespeichert.
+
+- **Laden:** funktioniert auf jedem Gerät ohne Setup (Dropdown → Laden)
+- **Speichern:** benötigt einmalig `VITE_GITHUB_SCENARIO_TOKEN` in `.env.local` (siehe `.env.example`)
+  - GitHub PAT (classic) mit `repo`-Scope auf `hektopascal2026/modell3`
+  - Für Production-Build: Token als GitHub Actions Secret beim Deploy setzen
+
+```bash
+cp .env.example .env.local
+# Token eintragen, dann:
+npm run dev
+```
 
 ## Status
 
