@@ -10,6 +10,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import planData from "./data/finanzierungsplan20260614.json";
+import { calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
+import { calcMonthlySachkosten, calcReserveMonthly } from "./lib/sachkosten.js";
 
 const MONTHS = 48;
 const currencyFormatter = new Intl.NumberFormat("de-CH", {
@@ -94,35 +97,18 @@ function KPI({ title, value, helpText }) {
   );
 }
 
-const INITIAL_SACHKOSTEN_WERTE = {
-  werbung: 6000,
-  grafik: 3000,
-  treuhand: 5000,
-  beratung: 1500,
-  mandate: 500,
-  versicherung: 2000,
-  raum: 4500,
-  verwaltung: 1000,
-  it: 2000,
-  spesen: 100,
-  finanz: 250,
-  reserve: 15,
-};
+const normalizeSachkosten = (items) =>
+  items.map((item) => ({
+    ...item,
+    costY4: item.costY4 ?? item.costY3 ?? 0,
+  }));
 
-const SACHKOSTEN_META = [
-  { id: "werbung", label: "Werbeaufwand", desc: "Agenturleistung, Werbung", type: "var", step: 500 },
-  { id: "grafik", label: "Grafik- und Bildaufwand", desc: "Agenturleistung, Rechte", type: "var", step: 200 },
-  { id: "treuhand", label: "Treuhandbüro", desc: "Finanz- und Lohnbuchhaltung", type: "fix", step: 500 },
-  { id: "beratung", label: "Beratungsdienstleistungen", desc: "z.B. Gründung, OE, Vertragswerk", type: "var", step: 100 },
-  { id: "mandate", label: "Mandatsleistungen", desc: "Verwaltungsrat 3 PAX a CHF 2000", type: "var", step: 50 },
-  { id: "versicherung", label: "Versicherungen, Abgaben, Gebühren, Steuern", desc: "z.B. Sach- und Haftpflichtversicherungen, Markenregistrierung, (KK-)Kommissionen", type: "fix", step: 200 },
-  { id: "raum", label: "Raumaufwand", desc: "Miete 2 Büroräume, bis zu 6 fixe Arbeitsplätze und 1 grosser Sitzungsraum bis zu 20 Personen, inkl. Nebenkosten", type: "fix", step: 200 },
-  { id: "verwaltung", label: "Verwaltungsaufwand", desc: "z.B. Büromaterial, Recht- und Revisionshonorare", type: "fix", step: 100 },
-  { id: "it", label: "Informatikaufwand", desc: "z.B. IT-Support CHF 100/h, Geräte, Software, Lizenzen, Telekommunikation, Hosting", type: "fix", step: 200 },
-  { id: "spesen", label: "Spesen", desc: "Reise, Verpflegung, Unterkunft (pro FTE / Monat)", type: "var", step: 10 },
-  { id: "finanz", label: "Finanzaufwand", desc: "Kapitalzinsen, Bankspesen", type: "fix", step: 50 },
-  { id: "reserve", label: "Reserve", desc: "Prozentsatz des Sach- und Dienstleistungsaufwands (%)", type: "var", step: 1, isPercent: true },
-];
+const DEFAULT_ROLES = planData.roles.map((r) => ({
+  ...r,
+  monthsY4: r.monthsY4 ?? r.monthsY3 ?? 0,
+}));
+
+const DEFAULT_SACHKOSTEN = normalizeSachkosten(planData.sachkosten);
 
 const DEFAULTS = {
   seedBetrag: 1000000,
@@ -145,25 +131,16 @@ const DEFAULTS = {
   sponsoringJahr2: 10000,
   sponsoringJahr3: 10000,
   sponsoringJahr4: 10000,
-  seniorFteJ1: 6,
-  seniorFteJ2: 8,
-  seniorFteJ3: 11,
-  seniorFteJ4: 11,
-  juniorFteJ1: 4,
-  juniorFteJ2: 5,
-  juniorFteJ3: 6,
-  juniorFteJ4: 6,
-  lohnSenior: 10000,
-  lohnJunior: 6000,
-  sozialabgabenProzent: 15.0,
+  roles: DEFAULT_ROLES,
+  sachkostenItems: DEFAULT_SACHKOSTEN,
+  sozialabgabenProzent: 16.0,
+  gewinnsteuerRate: 18.0,
   spezialtopf: 0,
-  sachkostenAuto: true,
-  sachkostenWerte: INITIAL_SACHKOSTEN_WERTE
 };
 
 const getStored = (key, fallback) => {
   try {
-    const val = localStorage.getItem(`hekto_${key}`);
+    const val = localStorage.getItem(`hekto3_${key}`);
     if (val === null) return fallback;
     return JSON.parse(val);
   } catch (e) {
@@ -196,44 +173,52 @@ function App() {
   const [sponsoringJahr2, setSponsoringJahr2] = useState(() => getStored("sponsoringJahr2", DEFAULTS.sponsoringJahr2));
   const [sponsoringJahr3, setSponsoringJahr3] = useState(() => getStored("sponsoringJahr3", DEFAULTS.sponsoringJahr3));
   const [sponsoringJahr4, setSponsoringJahr4] = useState(() => getStored("sponsoringJahr4", DEFAULTS.sponsoringJahr4));
-  
-  const [seniorFteJ1, setSeniorFteJ1] = useState(() => getStored("seniorFteJ1", DEFAULTS.seniorFteJ1));
-  const [seniorFteJ2, setSeniorFteJ2] = useState(() => getStored("seniorFteJ2", DEFAULTS.seniorFteJ2));
-  const [seniorFteJ3, setSeniorFteJ3] = useState(() => getStored("seniorFteJ3", DEFAULTS.seniorFteJ3));
-  const [seniorFteJ4, setSeniorFteJ4] = useState(() => getStored("seniorFteJ4", DEFAULTS.seniorFteJ4));
-  
-  const [juniorFteJ1, setJuniorFteJ1] = useState(() => getStored("juniorFteJ1", DEFAULTS.juniorFteJ1));
-  const [juniorFteJ2, setJuniorFteJ2] = useState(() => getStored("juniorFteJ2", DEFAULTS.juniorFteJ2));
-  const [juniorFteJ3, setJuniorFteJ3] = useState(() => getStored("juniorFteJ3", DEFAULTS.juniorFteJ3));
-  const [juniorFteJ4, setJuniorFteJ4] = useState(() => getStored("juniorFteJ4", DEFAULTS.juniorFteJ4));
 
-  const [lohnSenior, setLohnSenior] = useState(() => getStored("lohnSenior", DEFAULTS.lohnSenior));
-  const [lohnJunior, setLohnJunior] = useState(() => getStored("lohnJunior", DEFAULTS.lohnJunior));
+  const [roles, setRoles] = useState(() => getStored("roles", DEFAULTS.roles));
+  const [sachkostenItems, setSachkostenItems] = useState(() => getStored("sachkostenItems", DEFAULTS.sachkostenItems));
   const [sozialabgabenProzent, setSozialabgabenProzent] = useState(() => getStored("sozialabgabenProzent", DEFAULTS.sozialabgabenProzent));
+  const [gewinnsteuerRate, setGewinnsteuerRate] = useState(() => getStored("gewinnsteuerRate", DEFAULTS.gewinnsteuerRate));
   const [spezialtopf, setSpezialtopf] = useState(() => getStored("spezialtopf", DEFAULTS.spezialtopf));
-  
-  const [sachkostenAuto, setSachkostenAuto] = useState(() => getStored("sachkostenAuto", DEFAULTS.sachkostenAuto));
-  const [sachkostenWerte, setSachkostenWerte] = useState(() => getStored("sachkostenWerte", DEFAULTS.sachkostenWerte));
+
+  const reserveItem = useMemo(() => sachkostenItems.find((i) => i.id === "sach-23"), [sachkostenItems]);
+
+  const updateRole = (id, field, value) => {
+    setRoles((prev) =>
+      prev.map((role) => {
+        if (role.id !== id) return role;
+        const next = { ...role, [field]: value };
+        if (field === "monthsY3") next.monthsY4 = value;
+        return next;
+      })
+    );
+  };
+
+  const updateSachkosten = (id, field, value) => {
+    setSachkostenItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, [field]: value };
+        if (field === "costY3") next.costY4 = value;
+        return next;
+      })
+    );
+  };
 
   useEffect(() => {
     const data = {
       seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
       preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
       sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-      seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
-      juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
-      lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+      roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
     };
     Object.entries(data).forEach(([key, val]) => {
-      localStorage.setItem(`hekto_${key}`, JSON.stringify(val));
+      localStorage.setItem(`hekto3_${key}`, JSON.stringify(val));
     });
   }, [
     seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
     preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
     sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-    seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
-    juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
-    lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+    roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
   ]);
 
   const handleReset = () => {
@@ -257,20 +242,11 @@ function App() {
     setSponsoringJahr2(DEFAULTS.sponsoringJahr2);
     setSponsoringJahr3(DEFAULTS.sponsoringJahr3);
     setSponsoringJahr4(DEFAULTS.sponsoringJahr4);
-    setSeniorFteJ1(DEFAULTS.seniorFteJ1);
-    setSeniorFteJ2(DEFAULTS.seniorFteJ2);
-    setSeniorFteJ3(DEFAULTS.seniorFteJ3);
-    setSeniorFteJ4(DEFAULTS.seniorFteJ4);
-    setJuniorFteJ1(DEFAULTS.juniorFteJ1);
-    setJuniorFteJ2(DEFAULTS.juniorFteJ2);
-    setJuniorFteJ3(DEFAULTS.juniorFteJ3);
-    setJuniorFteJ4(DEFAULTS.juniorFteJ4);
-    setLohnSenior(DEFAULTS.lohnSenior);
-    setLohnJunior(DEFAULTS.lohnJunior);
+    setRoles(DEFAULTS.roles);
+    setSachkostenItems(DEFAULTS.sachkostenItems);
     setSozialabgabenProzent(DEFAULTS.sozialabgabenProzent);
+    setGewinnsteuerRate(DEFAULTS.gewinnsteuerRate);
     setSpezialtopf(DEFAULTS.spezialtopf);
-    setSachkostenAuto(DEFAULTS.sachkostenAuto);
-    setSachkostenWerte(DEFAULTS.sachkostenWerte);
   };
 
   const simulation = useMemo(() => {
@@ -303,23 +279,6 @@ function App() {
             : year === 3
               ? neueKundenJ3
               : neueKundenJ4;
-      const seniorFte =
-        year === 1
-          ? seniorFteJ1
-          : year === 2
-            ? seniorFteJ2
-            : year === 3
-              ? seniorFteJ3
-              : seniorFteJ4;
-      const juniorFte =
-        year === 1
-          ? juniorFteJ1
-          : year === 2
-            ? juniorFteJ2
-            : year === 3
-              ? juniorFteJ3
-              : juniorFteJ4;
-      const fte = seniorFte + juniorFte;
       const sponsoringProMonat = sponsoringByYear(year);
       let lizenzCashInflow = 0;
 
@@ -356,34 +315,24 @@ function App() {
       }, 0);
       const gesamteinnahmen = umsatzLizenzen + sponsoringProMonat;
       const cashwirksameEinnahmen = lizenzCashInflow + sponsoringProMonat;
-      const bruttolohn = (seniorFte * lohnSenior) + (juniorFte * lohnJunior);
-      const sozialabgaben = bruttolohn * (sozialabgabenProzent / 100);
-      const personalkosten = bruttolohn + sozialabgaben;
-      personalkostenByMonth[month] = personalkosten;
-      let sachkosten = 0;
-      if (sachkostenAuto) {
-        sachkosten = personalkosten * 0.25;
-      } else {
-        const subtotal = 
-          sachkostenWerte.werbung +
-          sachkostenWerte.grafik +
-          sachkostenWerte.treuhand +
-          sachkostenWerte.beratung +
-          sachkostenWerte.mandate +
-          sachkostenWerte.versicherung +
-          sachkostenWerte.raum +
-          sachkostenWerte.verwaltung +
-          sachkostenWerte.it +
-          (sachkostenWerte.spesen * fte) +
-          sachkostenWerte.finanz;
-        const reserve = subtotal * (sachkostenWerte.reserve / 100);
-        sachkosten = subtotal + reserve;
-      }
+
+      const personnel = calcMonthlyPersonnel(roles, month, sozialabgabenProzent);
+      const { total: sachkostenBase, breakdown } = calcMonthlySachkosten(sachkostenItems, month, {
+        fteSum: personnel.fteSum,
+      });
+      const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem, breakdown);
+      const sachkosten = sachkostenBase + reserve;
+
+      const aufwandOhneGewinnsteuer = personnel.personalkosten + sachkosten;
+      const ebitaMonat = gesamteinnahmen - aufwandOhneGewinnsteuer;
+      const gewinnsteuer = ebitaMonat > 0 ? ebitaMonat * (gewinnsteuerRate / 100) : 0;
+
+      personalkostenByMonth[month] = personnel.personalkosten;
       const spezialtopfKosten = month <= 36 ? (spezialtopf / 36) : 0;
-      const gesamtausgaben = personalkosten + sachkosten + spezialtopfKosten;
+      const gesamtausgaben = aufwandOhneGewinnsteuer + gewinnsteuer + spezialtopfKosten;
       const netBurn = cashwirksameEinnahmen - gesamtausgaben;
       cashbestand += netBurn + fundingInflow;
- 
+
       points.push({
         month,
         year,
@@ -392,9 +341,12 @@ function App() {
         gesamteinnahmen,
         cashwirksameEinnahmen,
         gesamtausgaben,
-        bruttolohn,
-        sozialabgaben,
-        personalkosten,
+        bruttolohn: personnel.bruttolohn,
+        sozialabgaben: personnel.sozialabgaben,
+        personalkosten: personnel.personalkosten,
+        sachkosten,
+        gewinnsteuer,
+        fteSum: personnel.fteSum,
         spezialtopfKosten,
         fundingInflow,
         sponsoringProMonat,
@@ -417,19 +369,12 @@ function App() {
 
     return points;
   }, [
-    lohnSenior,
-    lohnJunior,
+    roles,
+    sachkostenItems,
+    reserveItem,
     sozialabgabenProzent,
+    gewinnsteuerRate,
     spezialtopf,
-    seniorFteJ1,
-    seniorFteJ2,
-    seniorFteJ3,
-    seniorFteJ4,
-    juniorFteJ1,
-    juniorFteJ2,
-    juniorFteJ3,
-    juniorFteJ4,
-    sachkostenWerte,
     neueKundenJ1,
     neueKundenJ2,
     neueKundenJ3,
@@ -437,7 +382,6 @@ function App() {
     preisAbJ2,
     preisAbJ3,
     preisJ1,
-    sachkostenAuto,
     sponsoringJahr1,
     sponsoringJahr2,
     sponsoringJahr3,
@@ -625,59 +569,46 @@ function App() {
   const guvData = useMemo(() => {
     const years = [1, 2, 3];
     const results = {};
-    
+
     years.forEach((y) => {
       const yearPoints = simulation.filter((p) => p.year === y);
-      
+
       let umsatzLizenzen = 0;
       let sponsoring = 0;
       let personal = 0;
-      let tech = 0;
-      let marketing = 0;
-      let admin = 0;
-      
+      let sachkosten = 0;
+      let gewinnsteuer = 0;
+      let spezial = 0;
+
       yearPoints.forEach((p) => {
         umsatzLizenzen += p.umsatzLizenzen;
         sponsoring += p.sponsoringProMonat;
         personal += p.personalkosten;
-        
-        // Calculate sachkosten split
-        const totalSach = p.gesamtausgaben - p.personalkosten - p.spezialtopfKosten;
-        const itWeight = sachkostenWerte.it;
-        const mktWeight = sachkostenWerte.werbung;
-        
-        const seniorFte = y === 1 ? seniorFteJ1 : y === 2 ? seniorFteJ2 : y === 3 ? seniorFteJ3 : seniorFteJ4;
-        const juniorFte = y === 1 ? juniorFteJ1 : y === 2 ? juniorFteJ2 : y === 3 ? juniorFteJ3 : juniorFteJ4;
-        const currentFte = seniorFte + juniorFte;
-        
-        const spesenWeight = sachkostenWerte.spesen * currentFte;
-        const otherWeight = sachkostenWerte.grafik + sachkostenWerte.treuhand + sachkostenWerte.beratung +
-          sachkostenWerte.mandate + sachkostenWerte.versicherung + sachkostenWerte.raum +
-          sachkostenWerte.verwaltung + sachkostenWerte.finanz + spesenWeight;
-        
-        const reserveFactor = 1 + (sachkostenWerte.reserve / 100);
-        
-        const itTotal = itWeight * reserveFactor;
-        const mktTotal = mktWeight * reserveFactor;
-        const otherTotal = otherWeight * reserveFactor;
-        const totalWeight = itTotal + mktTotal + otherTotal;
-        
-        if (totalWeight > 0) {
-          tech += totalSach * (itTotal / totalWeight);
-          marketing += totalSach * (mktTotal / totalWeight);
-          admin += totalSach * (otherTotal / totalWeight) + p.spezialtopfKosten;
-        } else {
-          admin += p.spezialtopfKosten;
-        }
+        sachkosten += p.sachkosten;
+        gewinnsteuer += p.gewinnsteuer;
+        spezial += p.spezialtopfKosten;
       });
-      
+
+      const itItem = sachkostenItems.find((i) => i.id === "sach-12");
+      const werbItem = sachkostenItems.find((i) => i.id === "sach-2");
+      const grafItem = sachkostenItems.find((i) => i.id === "sach-3");
+      const itW = itItem ? (itItem[`costY${y}`] ?? itItem.costY3 ?? 0) : 0;
+      const mktW = (werbItem ? (werbItem[`costY${y}`] ?? 0) : 0) + (grafItem ? (grafItem[`costY${y}`] ?? 0) : 0);
+      const totalW = sachkostenItems
+        .filter((i) => i.id !== "sach-23")
+        .reduce((sum, i) => sum + (i[`costY${y}`] ?? i.costY3 ?? 0), 0);
+
+      const tech = totalW > 0 ? sachkosten * (itW / totalW) : 0;
+      const marketing = totalW > 0 ? sachkosten * (mktW / totalW) : 0;
+      const admin = sachkosten - tech - marketing + spezial;
+
       const gesamtertrag = umsatzLizenzen + sponsoring;
       const ebitda = gesamtertrag - personal - tech - marketing - admin;
       const abschreibungen = 0;
       const ebit = ebitda - abschreibungen;
-      const steuern = ebit > 0 ? ebit * 0.15 : 0;
+      const steuern = gewinnsteuer;
       const reingewinn = ebit - steuern;
-      
+
       results[y] = {
         umsatzLizenzen,
         sponsoring,
@@ -693,9 +624,23 @@ function App() {
         reingewinn,
       };
     });
-    
+
     return results;
-  }, [simulation, sachkostenWerte, sozialabgabenProzent, seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4, juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4, lohnSenior, lohnJunior]);
+  }, [simulation, sachkostenItems]);
+
+  const costValidation = useMemo(() => {
+    const years = [1, 2, 3];
+    return years.map((y) => {
+      const personal = calcYearlyPersonnel(roles, y, sozialabgabenProzent);
+      const excelPersonal = planData.summary[`personalY${y}`];
+      return {
+        year: y,
+        personal,
+        excelPersonal,
+        personalDelta: personal - excelPersonal,
+      };
+    });
+  }, [roles, sozialabgabenProzent]);
 
   const dummyData = useMemo(() => {
     // 1. Ratio
@@ -705,8 +650,12 @@ function App() {
     const sachRatio = 100 - persRatio;
 
     // 2. FTE values
-    const fteSeed = seniorFteJ1 + juniorFteJ1;
-    const fteSeriesA = seniorFteJ3 + juniorFteJ3;
+    const fteSeed = roles.reduce((sum, role) => sum + (role.monthsY1 > 0 ? role.fte : 0), 0);
+    const fteSeriesA = roles.reduce((sum, role) => sum + (role.monthsY3 > 0 ? role.fte : 0), 0);
+    const avgSalary =
+      roles.length > 0
+        ? Math.round(roles.reduce((sum, r) => sum + r.salaryMonth, 0) / roles.length)
+        : 10000;
 
     // 3. Series A Year
     const seriesAYear = Math.floor(((seriesAMonat === 0 ? 1 : seriesAMonat) - 1) / 12) + 1;
@@ -763,29 +712,28 @@ function App() {
       baseCaseMonths,
       bestCaseMonths,
       worstCaseMonths,
+      avgSalary,
     };
-  }, [simulation, guvData, seedMonat, seriesAMonat, seniorFteJ1, juniorFteJ1, seniorFteJ3, juniorFteJ3, sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4, breakEvenMonat]);
+  }, [simulation, guvData, roles, seedMonat, seriesAMonat, sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4, breakEvenMonat]);
 
   const handleSaveTemplate = () => {
     const name = window.prompt("Geben Sie einen Namen für das Template ein:", "Szenario 1");
     if (!name) return;
 
-    const templates = JSON.parse(localStorage.getItem("hekto_templates") || "{}");
+    const templates = JSON.parse(localStorage.getItem("hekto3_templates") || "{}");
     const data = {
       seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
       preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
       sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-      seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
-      juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
-      lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+      roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
     };
     templates[name] = data;
-    localStorage.setItem("hekto_templates", JSON.stringify(templates));
+    localStorage.setItem("hekto3_templates", JSON.stringify(templates));
     alert(`Template "${name}" erfolgreich gespeichert!`);
   };
 
   const handleLoadTemplate = () => {
-    const templates = JSON.parse(localStorage.getItem("hekto_templates") || "{}");
+    const templates = JSON.parse(localStorage.getItem("hekto3_templates") || "{}");
     const names = Object.keys(templates);
     if (names.length === 0) {
       alert("Keine gespeicherten Templates gefunden!");
@@ -829,23 +777,11 @@ function App() {
     if (data.sponsoringJahr3 !== undefined) setSponsoringJahr3(data.sponsoringJahr3);
     if (data.sponsoringJahr4 !== undefined) setSponsoringJahr4(data.sponsoringJahr4);
     
-    if (data.seniorFteJ1 !== undefined) setSeniorFteJ1(data.seniorFteJ1);
-    if (data.seniorFteJ2 !== undefined) setSeniorFteJ2(data.seniorFteJ2);
-    if (data.seniorFteJ3 !== undefined) setSeniorFteJ3(data.seniorFteJ3);
-    if (data.seniorFteJ4 !== undefined) setSeniorFteJ4(data.seniorFteJ4);
-    
-    if (data.juniorFteJ1 !== undefined) setJuniorFteJ1(data.juniorFteJ1);
-    if (data.juniorFteJ2 !== undefined) setJuniorFteJ2(data.juniorFteJ2);
-    if (data.juniorFteJ3 !== undefined) setJuniorFteJ3(data.juniorFteJ3);
-    if (data.juniorFteJ4 !== undefined) setJuniorFteJ4(data.juniorFteJ4);
-    
-    if (data.lohnSenior !== undefined) setLohnSenior(data.lohnSenior);
-    if (data.lohnJunior !== undefined) setLohnJunior(data.lohnJunior);
+    if (data.roles !== undefined) setRoles(data.roles);
+    if (data.sachkostenItems !== undefined) setSachkostenItems(normalizeSachkosten(data.sachkostenItems));
     if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
+    if (data.gewinnsteuerRate !== undefined) setGewinnsteuerRate(data.gewinnsteuerRate);
     if (data.spezialtopf !== undefined) setSpezialtopf(data.spezialtopf);
-    
-    if (data.sachkostenAuto !== undefined) setSachkostenAuto(data.sachkostenAuto);
-    if (data.sachkostenWerte !== undefined) setSachkostenWerte(data.sachkostenWerte);
 
     alert(`Template "${name}" erfolgreich geladen!`);
   };
@@ -866,9 +802,9 @@ Series A* Ausbau des publizistischen Angebots auf insgesamt drei Bezahlbreifings
 
 Die betrieblichen Aufwendungen (OpEx) sind durch die Struktur des wissensbasierten Dienstleistungsmodells geprägt. Das strategische Verhältnis zwischen Personal- und Sachkosten ist langfristig auf ${dummyData.persRatio} % / ${dummyData.sachRatio} % optimiert, da die Technologie den manuellen Skalierungsaufwand massiv abfedert.
 
-* Personalaufwand: Bildet den grössten Kostenblock. Fachjournalisten und Analysten werden in einem fairen Lohnband vergütet. Der durchschnittliche Bruttolohn (errechnet als Durchschnitt des Lohnbands) beträgt CHF ${numberFormatter.format(lohnSenior)}. Das Team wächst gestaffelt von ${dummyData.fteSeed} FTE in der Seed-Phase auf ${dummyData.fteSeriesA} FTE nach dem Series A-Closing.
-* Technologie- & Serverkosten: Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF ${numberFormatter.format(sachkostenWerte.it)} pro Monat.
-* Vertrieb & horizontales Wachstum: Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF ${numberFormatter.format(sachkostenWerte.werbung * 12)} jährlich, um den horizontalen Rollout voranzutreiben.
+* Personalaufwand: Bildet den grössten Kostenblock. ${roles.length} Rollen mit individuellen Salären (Ø CHF ${numberFormatter.format(dummyData.avgSalary)}/Monat). Das Team umfasst planmässig ${dummyData.fteSeed.toFixed(1)} FTE in der Seed-Phase und ${dummyData.fteSeriesA.toFixed(1)} FTE nach Series A.
+* Technologie- & Serverkosten: Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF ${numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-12")?.unitMonth ?? 3000)} pro Monat.
+* Vertrieb & horizontales Wachstum: Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF ${numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-2")?.costY3 ?? 42000)} jährlich, um den horizontalen Rollout voranzutreiben.
 
 9.3 Umsatz- & Absatzplanung
 
@@ -1050,7 +986,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
       {/* Tab Content */}
       {activeTab === "inputs" && (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4">
+          <div className="grid gap-4 md:grid-cols-2">
           {/* Card 1: Einnahmen-Treiber */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Einnahmen-Treiber</h2>
@@ -1187,145 +1124,170 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </div>
           </article>
 
-          {/* Card 2: Ausgaben-Treiber */}
+          {/* Card 2: Personalplan */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Ausgaben-Treiber</h2>
-            <div className="grid gap-4">
-              <div className="border-2 border-black p-3 space-y-2">
-                <span className="text-sm font-bold text-black uppercase">Jahr 1 Staffing</span>
-                <LabeledSliderInput label="Senior FTE" value={seniorFteJ1} onChange={setSeniorFteJ1} min={0} max={20} />
-                <LabeledSliderInput label="Junior FTE" value={juniorFteJ1} onChange={setJuniorFteJ1} min={0} max={20} />
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-2">Personalplan</h2>
+            <p className="text-xs text-gray-600 mb-4">17 Rollen · expliziter Monatseintritt · Mt. pro GJ (GJ4 = GJ3)</p>
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {costValidation.map((v) => (
+                <div key={v.year} className="border border-black p-2 bg-[#F5F5F5] text-xs">
+                  <span className="font-bold">GJ{v.year} Personal</span>
+                  <div className="font-mono">{currencyFormatter.format(Math.round(v.personal))}</div>
+                  <div className={Math.abs(v.personalDelta) < 5000 ? "text-green-700" : "text-amber-700"}>
+                    Δ Excel: {v.personalDelta >= 0 ? "+" : ""}{currencyFormatter.format(Math.round(v.personalDelta))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-[11px] border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="border-b-2 border-black bg-[#F5F5F5]">
+                    <th className="p-2 border-r border-black font-bold">Position</th>
+                    <th className="p-2 border-r border-black font-bold">Detail</th>
+                    <th className="p-2 border-r border-black font-bold w-20">Salär/Mt.</th>
+                    <th className="p-2 border-r border-black font-bold w-14">FTE</th>
+                    <th className="p-2 border-r border-black font-bold w-16">Start</th>
+                    <th className="p-2 border-r border-black font-bold w-14">Mt.GJ1</th>
+                    <th className="p-2 border-r border-black font-bold w-14">Mt.GJ2</th>
+                    <th className="p-2 font-bold w-14">Mt.GJ3</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roles.map((role) => (
+                    <tr key={role.id} className="border-b border-black hover:bg-[#FAF9F6]">
+                      <td className="p-1 border-r border-black font-sans text-[10px]">{role.position}</td>
+                      <td className="p-1 border-r border-black font-sans text-[10px]">{role.detail}</td>
+                      {[
+                        ["salaryMonth", 500],
+                        ["fte", 0.1],
+                        ["startMonth", 1],
+                        ["monthsY1", 1],
+                        ["monthsY2", 1],
+                        ["monthsY3", 1],
+                      ].map(([field, step]) => (
+                        <td key={field} className="p-0.5 border-r border-black">
+                          <input
+                            type="number"
+                            className="w-full border border-black bg-white px-1 py-0.5 text-[11px] font-semibold"
+                            value={role[field] ?? 0}
+                            step={step}
+                            min={0}
+                            onChange={(e) => updateRole(role.id, field, clampNumber(Number(e.target.value)))}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 grid gap-1 border-2 border-black p-3 bg-[#F5F5F5]">
+              <div className="flex justify-between text-sm">
+                <span className="font-bold uppercase text-xs">Sozialleistungen AG (%)</span>
+                <span className="font-semibold">{clampPercent(sozialabgabenProzent).toFixed(1)}%</span>
               </div>
-              <div className="border-2 border-black p-3 space-y-2">
-                <span className="text-sm font-bold text-black uppercase">Jahr 2 Staffing</span>
-                <LabeledSliderInput label="Senior FTE" value={seniorFteJ2} onChange={setSeniorFteJ2} min={0} max={20} />
-                <LabeledSliderInput label="Junior FTE" value={juniorFteJ2} onChange={setJuniorFteJ2} min={0} max={20} />
-              </div>
-              <div className="border-2 border-black p-3 space-y-2">
-                <span className="text-sm font-bold text-black uppercase">Jahr 3 Staffing</span>
-                <LabeledSliderInput label="Senior FTE" value={seniorFteJ3} onChange={setSeniorFteJ3} min={0} max={20} />
-                <LabeledSliderInput label="Junior FTE" value={juniorFteJ3} onChange={setJuniorFteJ3} min={0} max={20} />
-              </div>
-              <div className="border-2 border-black p-3 space-y-2">
-                <span className="text-sm font-bold text-black uppercase">Jahr 4 Staffing</span>
-                <LabeledSliderInput label="Senior FTE" value={seniorFteJ4} onChange={setSeniorFteJ4} min={0} max={20} />
-                <LabeledSliderInput label="Junior FTE" value={juniorFteJ4} onChange={setJuniorFteJ4} min={0} max={20} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <LabeledNumberInput
-                  label="Bruttolohn Senior FTE / Monat (CHF)"
-                  value={lohnSenior}
-                  onChange={setLohnSenior}
-                  step={500}
-                  helpText={`Effektiv: ${currencyFormatter.format(lohnSenior * (1 + sozialabgabenProzent / 100))} / Monat`}
-                />
-                <LabeledNumberInput
-                  label="Bruttolohn Junior FTE / Monat (CHF)"
-                  value={lohnJunior}
-                  onChange={setLohnJunior}
-                  step={500}
-                  helpText={`Effektiv: ${currencyFormatter.format(lohnJunior * (1 + sozialabgabenProzent / 100))} / Monat`}
-                />
-              </div>
+              <input
+                type="range"
+                min={0}
+                max={25}
+                step={0.5}
+                value={sozialabgabenProzent}
+                onChange={(e) => setSozialabgabenProzent(clampPercent(clampNumber(Number(e.target.value))))}
+                className="w-full accent-[#FF6B6B]"
+              />
+            </div>
+          </article>
+          </div>
+
+          {/* Sachkosten — volle Breite, GJ1–GJ3 */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-2">Sach- und Dienstleistungsaufwand</h2>
+            <p className="text-xs text-gray-600 mb-4">Jahresbeträge in CHF pro GJ · GJ4 = GJ3 · Gewinnsteuer dynamisch bei positivem Ergebnis</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-[11px] border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b-2 border-black bg-[#F5F5F5]">
+                    <th className="p-2 border-r border-black font-bold">Position</th>
+                    <th className="p-2 border-r border-black font-bold w-28">GJ1 (CHF)</th>
+                    <th className="p-2 border-r border-black font-bold w-28">GJ2 (CHF)</th>
+                    <th className="p-2 border-r border-black font-bold w-28">GJ3 (CHF)</th>
+                    <th className="p-2 border-r border-black font-bold w-28 text-gray-500">GJ4 (=GJ3)</th>
+                    <th className="p-2 font-bold">Typ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sachkostenItems.filter((i) => i.id !== "sach-23").map((item) => (
+                    <tr key={item.id} className="border-b border-black hover:bg-[#FAF9F6]">
+                      <td className="p-2 border-r border-black font-sans">
+                        <span className="font-semibold text-xs block">{item.position}</span>
+                        <span className="text-[10px] text-gray-500">{item.detail}</span>
+                      </td>
+                      {["costY1", "costY2", "costY3"].map((field) => (
+                        <td key={field} className="p-1 border-r border-black">
+                          <input
+                            type="number"
+                            className="w-full border border-black bg-white px-2 py-1 text-[11px] font-semibold"
+                            value={item[field] ?? 0}
+                            step={500}
+                            min={0}
+                            onChange={(e) => updateSachkosten(item.id, field, clampNumber(Number(e.target.value)))}
+                          />
+                        </td>
+                      ))}
+                      <td className="p-2 border-r border-black text-right text-gray-500 font-semibold">
+                        {numberFormatter.format(item.costY4 ?? item.costY3 ?? 0)}
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold text-center">{item.type ?? "—"}</td>
+                    </tr>
+                  ))}
+                  {reserveItem && (
+                    <tr className="border-b-2 border-black bg-[#FFF9E6]">
+                      <td className="p-2 border-r border-black font-sans font-semibold text-xs">{reserveItem.position}</td>
+                      {["costY1", "costY2", "costY3"].map((field) => (
+                        <td key={field} className="p-1 border-r border-black">
+                          <input
+                            type="number"
+                            className="w-full border border-black bg-white px-2 py-1 text-[11px] font-semibold"
+                            value={reserveItem[field] ?? 0}
+                            step={500}
+                            min={0}
+                            onChange={(e) => updateSachkosten(reserveItem.id, field, clampNumber(Number(e.target.value)))}
+                          />
+                        </td>
+                      ))}
+                      <td className="p-2 border-r border-black text-right text-gray-500 font-semibold">
+                        {numberFormatter.format(reserveItem.costY4 ?? reserveItem.costY3 ?? 0)}
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold text-center">10%</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-4">
               <div className="grid gap-1 border-2 border-black p-3 bg-[#F5F5F5]">
-                <div className="flex justify-between text-sm text-black">
-                  <span className="font-bold uppercase text-xs">Sozialabgaben & Vorsorge Arbeitgeber (%)</span>
-                  <span className="font-semibold text-black">{clampPercent(sozialabgabenProzent).toFixed(1)}%</span>
+                <div className="flex justify-between text-sm">
+                  <span className="font-bold uppercase text-xs">Gewinnsteuer (%)</span>
+                  <span className="font-semibold">{gewinnsteuerRate.toFixed(1)}%</span>
                 </div>
                 <input
                   type="range"
                   min={0}
-                  max={25}
+                  max={30}
                   step={0.5}
-                  value={sozialabgabenProzent}
-                  onChange={(event) => setSozialabgabenProzent(clampPercent(clampNumber(Number(event.target.value))))}
+                  value={gewinnsteuerRate}
+                  onChange={(e) => setGewinnsteuerRate(clampNumber(Number(e.target.value)))}
                   className="w-full accent-[#FF6B6B]"
                 />
-                <span className="text-[11px] text-gray-500 font-mono leading-tight">
-                  AHV/IV/EO: 5.30% | ALV: 1.10% | Pensionskasse (BVG), FAK, UVG, KTG: ca. 7–9%
-                </span>
+                <span className="text-[10px] text-gray-500">Nur bei positivem Monatsergebnis · Kapitalsteuer fix in GJ-Spalten</span>
               </div>
-              <label className="flex items-start gap-3 border-2 border-black bg-white p-3 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 accent-[#FF6B6B]"
-                  checked={sachkostenAuto}
-                  onChange={(event) => setSachkostenAuto(event.target.checked)}
-                />
-                <span className="text-sm font-semibold text-black">Sachkosten sind 25% der Personalkosten (80/20 Regel)</span>
-              </label>
-              {!sachkostenAuto && (
-                <div className="border-2 border-black bg-white p-4 space-y-4">
-                  <span className="text-sm font-bold text-black uppercase block border-b-2 border-black pb-1">
-                    Sach- und Dienstleistungsaufwand
-                  </span>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left font-mono text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b-2 border-black bg-[#F5F5F5] text-black">
-                          <th className="p-2 border-r-2 border-black font-bold">Kategorie</th>
-                          <th className="p-2 border-r-2 border-black font-bold">Typ</th>
-                          <th className="p-2 border-r-2 border-black font-bold w-32">Wert / Monat (CHF)</th>
-                          <th className="p-2 font-bold text-right">Info (Effektiv)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {SACHKOSTEN_META.map((meta) => {
-                          const value = sachkostenWerte[meta.id];
-
-                          let effectiveText = "";
-                          if (meta.id === "spesen") {
-                            effectiveText = "var. nach FTE";
-                          } else if (meta.id === "reserve") {
-                            effectiveText = `${value}% Puffer`;
-                          } else {
-                            effectiveText = `${numberFormatter.format(value)} CHF`;
-                          }
-
-                          return (
-                            <tr key={meta.id} className="border-b-2 border-black hover:bg-[#FAF9F6]">
-                              <td className="p-2 border-r-2 border-black font-sans">
-                                <span className="font-semibold text-xs block">{meta.label}</span>
-                                <span className="text-[10px] text-gray-500 block leading-tight">{meta.desc}</span>
-                              </td>
-                              <td className="p-2 border-r-2 border-black uppercase text-[10px] font-bold text-center">
-                                <span className={meta.type === "fix" ? "text-blue-600 bg-blue-50 px-1 border border-blue-600" : "text-amber-600 bg-amber-50 px-1 border border-amber-600"}>
-                                  {meta.type}
-                                </span>
-                              </td>
-                              <td className="p-1 border-r-2 border-black">
-                                <input
-                                  type="number"
-                                  className="w-full border border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
-                                  value={value}
-                                  step={meta.step}
-                                  min={0}
-                                  onChange={(event) => {
-                                    const nextVal = clampNumber(Number(event.target.value));
-                                    setSachkostenWerte((prev) => ({
-                                      ...prev,
-                                      [meta.id]: nextVal
-                                    }));
-                                  }}
-                                />
-                              </td>
-                              <td className="p-2 text-right font-semibold">
-                                {effectiveText}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
               <LabeledNumberInput
                 label="Spezialtopf / Einmaliger Puffer (CHF)"
                 value={spezialtopf}
                 onChange={setSpezialtopf}
                 step={5000}
-                helpText="Wird als flexibler Puffer gleichmässig über die ersten 3 Jahre (36 Monate) verteilt ausgegeben (ab Jahr 4 entfällt er)."
+                helpText="Gleichmässig über 36 Monate verteilt."
               />
             </div>
           </article>
@@ -1942,13 +1904,13 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </p>
             <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
               <li>
-                <strong>Personalaufwand:</strong> Bildet den grössten Kostenblock. Fachjournalisten und Analysten werden in einem fairen Lohnband vergütet. Der durchschnittliche Bruttolohn (errechnet als Durchschnitt des Lohnbands) beträgt CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(lohnSenior)}</span>. Das Team wächst gestaffelt von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeed}</span> FTE in der Seed-Phase auf <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeriesA}</span> FTE nach dem Series A-Closing.
+                <strong>Personalaufwand:</strong> Bildet den grössten Kostenblock. {roles.length} Rollen mit individuellen Salären (Ø CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(dummyData.avgSalary)}</span>/Monat). Das Team umfasst planmässig <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeed.toFixed(1)}</span> FTE in der Seed-Phase und <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeriesA.toFixed(1)}</span> FTE nach Series A.
               </li>
               <li>
-                <strong>Technologie- & Serverkosten:</strong> Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenWerte.it)}</span> pro Monat.
+                <strong>Technologie- & Serverkosten:</strong> Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-12")?.unitMonth ?? 3000)}</span> pro Monat.
               </li>
               <li>
-                <strong>Vertrieb & horizontales Wachstum:</strong> Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenWerte.werbung * 12)}</span> jährlich, um den horizontalen Rollout voranzutreiben.
+                <strong>Vertrieb & horizontales Wachstum:</strong> Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-2")?.costY3 ?? 42000)}</span> jährlich, um den horizontalen Rollout voranzutreiben.
               </li>
             </ul>
 

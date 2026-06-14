@@ -12,7 +12,10 @@
     "totalY1": 1993432,
     "totalY2": 2539110,
     "totalY3": 2611110,
-    "sozialleistungenPct": 0.16
+    "sozialleistungenPct": 0.16,
+    "personalY4": 1987800,
+    "sachY4": 623310,
+    "totalY4": 2611110
   },
   "roles": [
     {
@@ -27,7 +30,9 @@
       "monthsY3": 12.0,
       "costY1": 120000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-2",
@@ -41,7 +46,9 @@
       "monthsY3": 12.0,
       "costY1": 120000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-3",
@@ -55,7 +62,9 @@
       "monthsY3": 12.0,
       "costY1": 120000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-4",
@@ -69,7 +78,9 @@
       "monthsY3": 12.0,
       "costY1": 96000,
       "costY2": 96000,
-      "costY3": 96000
+      "costY3": 96000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-5",
@@ -83,7 +94,9 @@
       "monthsY3": 12.0,
       "costY1": 132000,
       "costY2": 132000,
-      "costY3": 132000
+      "costY3": 132000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-6",
@@ -97,7 +110,9 @@
       "monthsY3": 12.0,
       "costY1": 105600,
       "costY2": 105600,
-      "costY3": 105600
+      "costY3": 105600,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-7",
@@ -111,7 +126,9 @@
       "monthsY3": 12.0,
       "costY1": 120000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-8",
@@ -125,7 +142,9 @@
       "monthsY3": 12.0,
       "costY1": 120000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-9",
@@ -139,7 +158,9 @@
       "monthsY3": 12.0,
       "costY1": 108000,
       "costY2": 108000,
-      "costY3": 108000
+      "costY3": 108000,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-10",
@@ -153,7 +174,9 @@
       "monthsY3": 12.0,
       "costY1": 44000,
       "costY2": 105600,
-      "costY3": 105600
+      "costY3": 105600,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-11",
@@ -167,7 +190,9 @@
       "monthsY3": 12.0,
       "costY1": 11200,
       "costY2": 67200,
-      "costY3": 67200
+      "costY3": 67200,
+      "startMonth": 1,
+      "monthsY4": 12.0
     },
     {
       "id": "role-12",
@@ -181,7 +206,9 @@
       "monthsY3": 12.0,
       "costY1": 0.0,
       "costY2": 86400,
-      "costY3": 86400
+      "costY3": 86400,
+      "startMonth": 13,
+      "monthsY4": 12.0
     },
     {
       "id": "role-13",
@@ -195,7 +222,9 @@
       "monthsY3": 12.0,
       "costY1": 0.0,
       "costY2": 67200,
-      "costY3": 67200
+      "costY3": 67200,
+      "startMonth": 13,
+      "monthsY4": 12.0
     },
     {
       "id": "role-14",
@@ -209,7 +238,9 @@
       "monthsY3": 12.0,
       "costY1": 60000,
       "costY2": 120000,
-      "costY3": 120000
+      "costY3": 120000,
+      "startMonth": 7,
+      "monthsY4": 12.0
     },
     {
       "id": "role-15",
@@ -223,7 +254,9 @@
       "monthsY3": 12.0,
       "costY1": 0.0,
       "costY2": 81000,
-      "costY3": 108000
+      "costY3": 108000,
+      "startMonth": 13,
+      "monthsY4": 12.0
     },
     {
       "id": "role-16",
@@ -237,7 +270,9 @@
       "monthsY3": 12.0,
       "costY1": 33600,
       "costY2": 67200,
-      "costY3": 67200
+      "costY3": 67200,
+      "startMonth": 7,
+      "monthsY4": 12.0
     },
     {
       "id": "role-17",
@@ -251,7 +286,9 @@
       "monthsY3": 12.0,
       "costY1": 16800,
       "costY2": 50400,
-      "costY3": 50400
+      "costY3": 50400,
+      "startMonth": 9,
+      "monthsY4": 12.0
     }
   ],
   "sachkosten": [
@@ -467,13 +504,14 @@
     },
     {
       "id": "sach-22",
-      "position": "Steuern",
-      "detail": "Kapitalsteuer (500 - 2k), Gewinnsteuer 18% des Gewinns",
+      "position": "Kapitalsteuer",
+      "detail": "Kapitalsteuer (fix pro GJ)",
       "unitMonth": null,
-      "type": null,
-      "costY1": 500.0,
-      "costY2": 1000.0,
-      "costY3": 28500
+      "type": "fix",
+      "costY1": 500,
+      "costY2": 1000,
+      "costY3": 1500,
+      "costY4": 1500
     },
     {
       "id": "sach-23",
@@ -485,5 +523,16 @@
       "costY2": 35510,
       "costY3": 39210
     }
-  ]
+  ],
+  "taxes": {
+    "kapitalsteuer": {
+      "y1": 500,
+      "y2": 1000,
+      "y3": 1500,
+      "y4": 1500
+    },
+    "gewinnsteuerRate": 0.18,
+    "gewinnsteuerNurBeiPositivemEbita": true,
+    "note": "Kapitalsteuer fix im Aufwand; Gewinnsteuer dynamisch 18% × EBITA wenn > 0"
+  }
 }

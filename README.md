@@ -27,6 +27,6 @@ npm run dev
 
 - [x] Repo angelegt, Excel-Daten extrahiert
 - [x] Haupttab-Konzept dokumentiert
-- [ ] Personal-Tabelle im UI
-- [ ] Rollenbasierte Monatssimulation
-- [ ] Sachkosten-Tabelle mit neuen Kategorien
+- [x] Personal-Tabelle im UI (Startmonat, FTE, Mt. GJ1–GJ3)
+- [x] Sachkosten-Tabelle mit GJ1–GJ3-Spalten (GJ4 = GJ3)
+- [x] Rollenbasierte Monatssimulation inkl. Kapitalsteuer + Gewinnsteuer

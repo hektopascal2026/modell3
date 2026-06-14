@@ -36,26 +36,22 @@ Monatseintritt wird in Excel als **«Mt.»** pro Geschäftsjahr (GJ) erfasst —
 | Detail | `detail` | Text | «Oliver Fuchs» |
 | Salär/Monat | `salaryMonth` | CHF | 7'000 – 11'000 |
 | Head | `head` | Zahl | meist 1 |
-| FTE | `fte` | 0–1 | 0.6 – 1.0 |
+| FTE | `fte` | **Zahlenfeld** (z.B. 0.6, 0.8, 1.0) | 0.6 – 1.0 |
 | Mt. GJ1 | `monthsY1` | 0–12 | gestaffelt |
 | Mt. GJ2 | `monthsY2` | 0–12 | meist 12 |
 | Mt. GJ3 | `monthsY3` | 0–12 | meist 12 |
-| Mt. GJ4 | `monthsY4` | 0–12 | *neu für 48-Mt.-Modell* |
+| Mt. GJ4 | `monthsY4` | 0–12 | **= GJ3** (übernommen) |
+| **Eintritt ab Monat** | `startMonth` | 1–48 | **Pflichtfeld**, explizit je Rolle |
 
-**Monatseintritt — zwei mögliche Interpretationen:**
+**Entscheidung Monatseintritt:** Immer **expliziter Startmonat** (`startMonth`) plus «Mt.»-Dauer pro GJ — keine implizite Annahme «ab Monat 1».
 
-| Variante | Eingabe | Berechnung Monat 1–48 |
-|---|---|---|
-| **A (Excel-konform)** | «Mt.» = aktive Monate im GJ | Rolle zählt in GJ1 für N Monate; Verteilung gleichmässig ab Monat 1 oder ab explizitem Startmonat |
-| **B (präziser)** | Zusätzlich «Eintritt ab Monat» (1–48) | Rolle aktiv ab `startMonth` für `monthsY1` Monate in GJ1, dann 12 Mt. in GJ2+ |
+Beispiele:
 
-**Empfehlung:** Variante **B** im UI, mit Excel-Import als Variante A (Startmonat = 1, «Mt.» = Dauer).
+- Fachjournalist senior: `startMonth=1`, `monthsY1=5` → aktiv Monate 1–5
+- Sales #2: `startMonth=13`, `monthsY2=9` → aktiv Monate 13–21
+- Assistenz CEO/COO: `startMonth=9`, `monthsY1=4` → aktiv Monate 9–12
 
-Beispiele aus dem Plan:
-
-- Fachjournalist senior: GJ1 nur 5 Mt. → Eintritt Monat 1, aktiv Monate 1–5
-- Sales #2: GJ1 leer, GJ2 9 Mt. → Eintritt Monat 13, aktiv 9 Monate
-- Assistenz CEO/COO: GJ1 4 Mt. → Eintritt Monat 1 oder Monat 9 (je nach Hiring-Plan)
+**FTE:** Einfaches Zahlenfeld pro Rolle (nicht abgeleitetes «aktive FTE»-KPI). Kostenformel: `salaryMonth × fte` solange Rolle im Monat aktiv ist. Für FTE-abhängige Sachkosten (Spesen, Kommunikation): Summe der `fte`-Felder aller **aktiven** Rollen im Monat.
 
 **Monatskosten-Berechnung (Simulation):**
 
@@ -97,7 +93,7 @@ personalkosten = bruttolohn + sozialabgaben;
 | `fix` | `unitMonth` (konstant) |
 | `var` | `unitMonth` oder Jahres-Override / 12 |
 | `einmalig` | Betrag nur im ersten aktiven Monat des GJ (Gründung, Initial Grafik) |
-| `fte` | `ratePerFte × aktiveFte` (Spesen 200, Kommunikation 100) |
+| `fte` | `ratePerFte × Σ role.fte` (nur aktive Rollen; FTE aus Zahlenfeld) |
 | `prozent` | Reserve 10% auf Sachkosten **exkl. Freelance** |
 
 **Neue Kategorien vs. Modell 2:**
@@ -110,9 +106,30 @@ personalkosten = bruttolohn + sozialabgaben;
 - Kommunikationspauschale (100/PAX/Mt.)
 - Aus- und Weiterbildung (ab GJ2)
 - Mitgliedschaften (steigend)
-- Steuern (Gewinnsteuer ab GJ3)
+- **Honorare Freelance** — in Sach- und Dienstleistungsaufwand (wie Excel), nicht Personal
+- **Steuern** — siehe Abschnitt unten
 
 **Default:** `sachkostenAuto = false` (im Gegensatz zu Modell 2), Werte aus `src/data/finanzierungsplan20260614.json`.
+
+#### Steuern (wie Excel, beide Komponenten)
+
+Im Finanzierungsplan sind **zwei Steuerkomponenten** getrennt:
+
+| Komponente | Excel-Zeile | GJ1 | GJ2 | GJ3 | GJ4 | Logik in Modell 3 |
+|---|---|---|---|---|---|---|
+| **Kapitalsteuer** | Aufwand «Steuern» (Zeile 52) | 500 | 1'000 | 1'500 (+ Planungsanteil) | = GJ3 | Fixer Betriebsaufwand, monatlich 1/12 des GJ-Betrags |
+| **Gewinnsteuer** | Zeile 73 | 0 | 0 | 18% × EBITA | dynamisch | **Nur bei positivem Ergebnis** (ab Break-even / EBITA > 0), 18% |
+
+Excel-Formeln zur Referenz:
+
+- Aufwand Steuern GJ3: `=1500 + (150000 × 18%)` → Kapitalsteuer + Planungsannahme
+- Gewinnsteuer GJ3: `=18% × EBITA` (dynamisch aus Ergebnis)
+
+In der **Monatssimulation**:
+
+1. Kapitalsteuer läuft ab Monat 1 als fixer Sachkostenposten (unabhängig vom Ergebnis)
+2. Gewinnsteuer wird monatlich berechnet, sobald `Einnahmen − Aufwand (ohne Gewinnsteuer) > 0`
+3. Gewinnsteuer ist **nicht** in der Kapitalsteuer-Zeile enthalten (keine Doppelzählung)
 
 ---
 
@@ -188,12 +205,15 @@ const SACHKOSTEN_DEFAULTS = [
 
 ---
 
-## Offene Fragen
+## Entscheidungen (14.06.2026)
 
-1. **Monatseintritt absolut vs. «Mt.»-Dauer:** Soll der User den Startmonat explizit setzen (z.B. Sales ab Monat 7), oder reicht «5 Mt. in GJ1» mit Start = Monat 1?
-2. **GJ4:** Excel hat nur 3 GJ — Modell läuft 48 Monate. GJ4-Werte analog GJ3 übernehmen oder separat editierbar?
-3. **Steuern & Gewinnsteuer:** Im Excel ab GJ3 — in der Monatssimulation erst ab Break-even berechnen?
-4. **Freelance vs. Personal:** Honorare separat in GuV-Zeile «Externe Dienstleistungen» statt Personal?
+| # | Frage | Entscheidung |
+|---|---|---|
+| 1 | Monatseintritt | **Expliziter `startMonth` pro Rolle** (nicht implizit ab Monat 1) |
+| 2 | GJ4 | **Werte von GJ3 übernehmen** (`monthsY4 = monthsY3`, Sachkosten GJ4 = GJ3) |
+| 3 | Steuern | **Kapitalsteuer** fix ab Start + **Gewinnsteuer 18%** nur bei positivem EBITA |
+| 4 | Freelance | **Wie Excel** — Honorare unter Sach- und Dienstleistungsaufwand |
+| — | FTE | **Zahlenfeld** pro Rolle; keine abgeleitete «aktive FTE»-Anzeige als Eingabe |
 
 ---
 
