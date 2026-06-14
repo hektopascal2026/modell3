@@ -1,0 +1,2169 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+const MONTHS = 48;
+const currencyFormatter = new Intl.NumberFormat("de-CH", {
+  style: "currency",
+  currency: "CHF",
+  maximumFractionDigits: 0,
+});
+const numberFormatter = new Intl.NumberFormat("de-CH");
+const axisCurrencyFormatter = (value) => numberFormatter.format(Math.round(value));
+
+const yearByMonth = (month) => {
+  return Math.min(4, Math.ceil(month / 12));
+};
+
+const RESERVE_CHF = 100_000;
+
+const clampPercent = (value) => Math.min(100, Math.max(0, value));
+const clampNumber = (value) => (Number.isNaN(value) ? 0 : value);
+
+function LabeledNumberInput({ label, value, onChange, step = 1, min = 0, max, helpText }) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  return (
+    <label className="grid gap-2">
+      <span className="text-sm font-semibold text-black">{label}</span>
+      <input
+        type="number"
+        className="w-full border-2 border-black bg-white px-3 py-2 text-sm font-semibold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] focus:bg-[#fafafa] focus:outline-none"
+        value={draft}
+        step={step}
+        min={min}
+        max={max}
+        onChange={(event) => {
+          const raw = event.target.value;
+          setDraft(raw);
+          if (raw === "") return;
+          onChange(clampNumber(Number(raw)));
+        }}
+        onBlur={() => {
+          if (draft === "") {
+            setDraft("0");
+            onChange(0);
+          }
+        }}
+      />
+      {helpText && <span className="text-xs text-gray-600 font-mono -mt-1">{helpText}</span>}
+    </label>
+  );
+}
+
+function LabeledSliderInput({ label, value, onChange, min = 0, max = 1000, step = 1 }) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between text-sm">
+        <span className="font-semibold text-black">{label}</span>
+        <span className="font-semibold text-black">{numberFormatter.format(value)}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(clampNumber(Number(event.target.value)))}
+        className="w-full accent-[#FF6B6B]"
+      />
+    </div>
+  );
+}
+
+function KPI({ title, value, helpText }) {
+  return (
+    <div className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+      <p className="text-xs font-normal text-black">{title}</p>
+      <p className="mt-1 text-lg font-bold text-black">{value}</p>
+      <p className="mt-1 text-xs font-normal text-black">{helpText}</p>
+    </div>
+  );
+}
+
+const INITIAL_SACHKOSTEN_WERTE = {
+  werbung: 6000,
+  grafik: 3000,
+  treuhand: 5000,
+  beratung: 1500,
+  mandate: 500,
+  versicherung: 2000,
+  raum: 4500,
+  verwaltung: 1000,
+  it: 2000,
+  spesen: 100,
+  finanz: 250,
+  reserve: 15,
+};
+
+const SACHKOSTEN_META = [
+  { id: "werbung", label: "Werbeaufwand", desc: "Agenturleistung, Werbung", type: "var", step: 500 },
+  { id: "grafik", label: "Grafik- und Bildaufwand", desc: "Agenturleistung, Rechte", type: "var", step: 200 },
+  { id: "treuhand", label: "Treuhandbüro", desc: "Finanz- und Lohnbuchhaltung", type: "fix", step: 500 },
+  { id: "beratung", label: "Beratungsdienstleistungen", desc: "z.B. Gründung, OE, Vertragswerk", type: "var", step: 100 },
+  { id: "mandate", label: "Mandatsleistungen", desc: "Verwaltungsrat 3 PAX a CHF 2000", type: "var", step: 50 },
+  { id: "versicherung", label: "Versicherungen, Abgaben, Gebühren, Steuern", desc: "z.B. Sach- und Haftpflichtversicherungen, Markenregistrierung, (KK-)Kommissionen", type: "fix", step: 200 },
+  { id: "raum", label: "Raumaufwand", desc: "Miete 2 Büroräume, bis zu 6 fixe Arbeitsplätze und 1 grosser Sitzungsraum bis zu 20 Personen, inkl. Nebenkosten", type: "fix", step: 200 },
+  { id: "verwaltung", label: "Verwaltungsaufwand", desc: "z.B. Büromaterial, Recht- und Revisionshonorare", type: "fix", step: 100 },
+  { id: "it", label: "Informatikaufwand", desc: "z.B. IT-Support CHF 100/h, Geräte, Software, Lizenzen, Telekommunikation, Hosting", type: "fix", step: 200 },
+  { id: "spesen", label: "Spesen", desc: "Reise, Verpflegung, Unterkunft (pro FTE / Monat)", type: "var", step: 10 },
+  { id: "finanz", label: "Finanzaufwand", desc: "Kapitalzinsen, Bankspesen", type: "fix", step: 50 },
+  { id: "reserve", label: "Reserve", desc: "Prozentsatz des Sach- und Dienstleistungsaufwands (%)", type: "var", step: 1, isPercent: true },
+];
+
+const DEFAULTS = {
+  seedBetrag: 1000000,
+  seedMonat: 0,
+  seriesABetrag: 0,
+  seriesAMonat: 12,
+  preSeedAfondPerdu: 100000,
+  preSeedBridge: 50000,
+  neueKundenJ1: 40,
+  neueKundenJ2: 80,
+  neueKundenJ3: 120,
+  neueKundenJ4: 120,
+  preisJ1: 60,
+  preisAbJ2: 80,
+  preisAbJ3: 100,
+  verlaengerungNachJ1: 85,
+  verlaengerungNachJ2: 90,
+  verlaengerungNachJ3: 92,
+  sponsoringJahr1: 0,
+  sponsoringJahr2: 10000,
+  sponsoringJahr3: 10000,
+  sponsoringJahr4: 10000,
+  seniorFteJ1: 6,
+  seniorFteJ2: 8,
+  seniorFteJ3: 11,
+  seniorFteJ4: 11,
+  juniorFteJ1: 4,
+  juniorFteJ2: 5,
+  juniorFteJ3: 6,
+  juniorFteJ4: 6,
+  lohnSenior: 10000,
+  lohnJunior: 6000,
+  sozialabgabenProzent: 15.0,
+  spezialtopf: 0,
+  sachkostenAuto: true,
+  sachkostenWerte: INITIAL_SACHKOSTEN_WERTE
+};
+
+const getStored = (key, fallback) => {
+  try {
+    const val = localStorage.getItem(`hekto_${key}`);
+    if (val === null) return fallback;
+    return JSON.parse(val);
+  } catch (e) {
+    return fallback;
+  }
+};
+
+function App() {
+  const [activeTab, setActiveTab] = useState("inputs"); // "inputs" | "calc" | "charts"
+  const [seedBetrag, setSeedBetrag] = useState(() => getStored("seedBetrag", DEFAULTS.seedBetrag));
+  const [seedMonat, setSeedMonat] = useState(() => getStored("seedMonat", DEFAULTS.seedMonat));
+  const [seriesABetrag, setSeriesABetrag] = useState(() => getStored("seriesABetrag", DEFAULTS.seriesABetrag));
+  const [seriesAMonat, setSeriesAMonat] = useState(() => getStored("seriesAMonat", DEFAULTS.seriesAMonat));
+  const [preSeedAfondPerdu, setPreSeedAfondPerdu] = useState(() => getStored("preSeedAfondPerdu", DEFAULTS.preSeedAfondPerdu));
+  const [preSeedBridge, setPreSeedBridge] = useState(() => getStored("preSeedBridge", DEFAULTS.preSeedBridge));
+  
+  const startkapital = (seedMonat === 0 ? seedBetrag : 0) + (seriesAMonat === 0 ? seriesABetrag : 0);
+
+  const [neueKundenJ1, setNeueKundenJ1] = useState(() => getStored("neueKundenJ1", DEFAULTS.neueKundenJ1));
+  const [neueKundenJ2, setNeueKundenJ2] = useState(() => getStored("neueKundenJ2", DEFAULTS.neueKundenJ2));
+  const [neueKundenJ3, setNeueKundenJ3] = useState(() => getStored("neueKundenJ3", DEFAULTS.neueKundenJ3));
+  const [neueKundenJ4, setNeueKundenJ4] = useState(() => getStored("neueKundenJ4", DEFAULTS.neueKundenJ4));
+  const [preisJ1, setPreisJ1] = useState(() => getStored("preisJ1", DEFAULTS.preisJ1));
+  const [preisAbJ2, setPreisAbJ2] = useState(() => getStored("preisAbJ2", DEFAULTS.preisAbJ2));
+  const [preisAbJ3, setPreisAbJ3] = useState(() => getStored("preisAbJ3", DEFAULTS.preisAbJ3));
+  const [verlaengerungNachJ1, setVerlaengerungNachJ1] = useState(() => getStored("verlaengerungNachJ1", DEFAULTS.verlaengerungNachJ1));
+  const [verlaengerungNachJ2, setVerlaengerungNachJ2] = useState(() => getStored("verlaengerungNachJ2", DEFAULTS.verlaengerungNachJ2));
+  const [verlaengerungNachJ3, setVerlaengerungNachJ3] = useState(() => getStored("verlaengerungNachJ3", DEFAULTS.verlaengerungNachJ3));
+  const [sponsoringJahr1, setSponsoringJahr1] = useState(() => getStored("sponsoringJahr1", DEFAULTS.sponsoringJahr1));
+  const [sponsoringJahr2, setSponsoringJahr2] = useState(() => getStored("sponsoringJahr2", DEFAULTS.sponsoringJahr2));
+  const [sponsoringJahr3, setSponsoringJahr3] = useState(() => getStored("sponsoringJahr3", DEFAULTS.sponsoringJahr3));
+  const [sponsoringJahr4, setSponsoringJahr4] = useState(() => getStored("sponsoringJahr4", DEFAULTS.sponsoringJahr4));
+  
+  const [seniorFteJ1, setSeniorFteJ1] = useState(() => getStored("seniorFteJ1", DEFAULTS.seniorFteJ1));
+  const [seniorFteJ2, setSeniorFteJ2] = useState(() => getStored("seniorFteJ2", DEFAULTS.seniorFteJ2));
+  const [seniorFteJ3, setSeniorFteJ3] = useState(() => getStored("seniorFteJ3", DEFAULTS.seniorFteJ3));
+  const [seniorFteJ4, setSeniorFteJ4] = useState(() => getStored("seniorFteJ4", DEFAULTS.seniorFteJ4));
+  
+  const [juniorFteJ1, setJuniorFteJ1] = useState(() => getStored("juniorFteJ1", DEFAULTS.juniorFteJ1));
+  const [juniorFteJ2, setJuniorFteJ2] = useState(() => getStored("juniorFteJ2", DEFAULTS.juniorFteJ2));
+  const [juniorFteJ3, setJuniorFteJ3] = useState(() => getStored("juniorFteJ3", DEFAULTS.juniorFteJ3));
+  const [juniorFteJ4, setJuniorFteJ4] = useState(() => getStored("juniorFteJ4", DEFAULTS.juniorFteJ4));
+
+  const [lohnSenior, setLohnSenior] = useState(() => getStored("lohnSenior", DEFAULTS.lohnSenior));
+  const [lohnJunior, setLohnJunior] = useState(() => getStored("lohnJunior", DEFAULTS.lohnJunior));
+  const [sozialabgabenProzent, setSozialabgabenProzent] = useState(() => getStored("sozialabgabenProzent", DEFAULTS.sozialabgabenProzent));
+  const [spezialtopf, setSpezialtopf] = useState(() => getStored("spezialtopf", DEFAULTS.spezialtopf));
+  
+  const [sachkostenAuto, setSachkostenAuto] = useState(() => getStored("sachkostenAuto", DEFAULTS.sachkostenAuto));
+  const [sachkostenWerte, setSachkostenWerte] = useState(() => getStored("sachkostenWerte", DEFAULTS.sachkostenWerte));
+
+  useEffect(() => {
+    const data = {
+      seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
+      preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
+      sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
+      seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
+      juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
+      lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+    };
+    Object.entries(data).forEach(([key, val]) => {
+      localStorage.setItem(`hekto_${key}`, JSON.stringify(val));
+    });
+  }, [
+    seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
+    preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
+    sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
+    seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
+    juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
+    lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+  ]);
+
+  const handleReset = () => {
+    setSeedBetrag(DEFAULTS.seedBetrag);
+    setSeedMonat(DEFAULTS.seedMonat);
+    setSeriesABetrag(DEFAULTS.seriesABetrag);
+    setSeriesAMonat(DEFAULTS.seriesAMonat);
+    setPreSeedAfondPerdu(DEFAULTS.preSeedAfondPerdu);
+    setPreSeedBridge(DEFAULTS.preSeedBridge);
+    setNeueKundenJ1(DEFAULTS.neueKundenJ1);
+    setNeueKundenJ2(DEFAULTS.neueKundenJ2);
+    setNeueKundenJ3(DEFAULTS.neueKundenJ3);
+    setNeueKundenJ4(DEFAULTS.neueKundenJ4);
+    setPreisJ1(DEFAULTS.preisJ1);
+    setPreisAbJ2(DEFAULTS.preisAbJ2);
+    setPreisAbJ3(DEFAULTS.preisAbJ3);
+    setVerlaengerungNachJ1(DEFAULTS.verlaengerungNachJ1);
+    setVerlaengerungNachJ2(DEFAULTS.verlaengerungNachJ2);
+    setVerlaengerungNachJ3(DEFAULTS.verlaengerungNachJ3);
+    setSponsoringJahr1(DEFAULTS.sponsoringJahr1);
+    setSponsoringJahr2(DEFAULTS.sponsoringJahr2);
+    setSponsoringJahr3(DEFAULTS.sponsoringJahr3);
+    setSponsoringJahr4(DEFAULTS.sponsoringJahr4);
+    setSeniorFteJ1(DEFAULTS.seniorFteJ1);
+    setSeniorFteJ2(DEFAULTS.seniorFteJ2);
+    setSeniorFteJ3(DEFAULTS.seniorFteJ3);
+    setSeniorFteJ4(DEFAULTS.seniorFteJ4);
+    setJuniorFteJ1(DEFAULTS.juniorFteJ1);
+    setJuniorFteJ2(DEFAULTS.juniorFteJ2);
+    setJuniorFteJ3(DEFAULTS.juniorFteJ3);
+    setJuniorFteJ4(DEFAULTS.juniorFteJ4);
+    setLohnSenior(DEFAULTS.lohnSenior);
+    setLohnJunior(DEFAULTS.lohnJunior);
+    setSozialabgabenProzent(DEFAULTS.sozialabgabenProzent);
+    setSpezialtopf(DEFAULTS.spezialtopf);
+    setSachkostenAuto(DEFAULTS.sachkostenAuto);
+    setSachkostenWerte(DEFAULTS.sachkostenWerte);
+  };
+
+  const simulation = useMemo(() => {
+    const sponsoringByYear = (year) =>
+      year === 1 ? sponsoringJahr1 : year === 2 ? sponsoringJahr2 : year === 3 ? sponsoringJahr3 : sponsoringJahr4;
+    const renew1 = clampPercent(verlaengerungNachJ1) / 100;
+    const renew2 = clampPercent(verlaengerungNachJ2) / 100;
+    const renew3 = clampPercent(verlaengerungNachJ3) / 100;
+
+    const points = [];
+    const personalkostenByMonth = new Array(MONTHS + 1).fill(0);
+    /** Cohorts with current size and age in months */
+    const cohorts = [];
+    let cashbestand = startkapital;
+
+    for (let month = 1; month <= MONTHS; month += 1) {
+      let fundingInflow = 0;
+      if (seedMonat === month) {
+        fundingInflow += seedBetrag;
+      }
+      if (seriesAMonat === month) {
+        fundingInflow += seriesABetrag;
+      }
+      const year = yearByMonth(month);
+      const neueKunden =
+        year === 1
+          ? neueKundenJ1
+          : year === 2
+            ? neueKundenJ2
+            : year === 3
+              ? neueKundenJ3
+              : neueKundenJ4;
+      const seniorFte =
+        year === 1
+          ? seniorFteJ1
+          : year === 2
+            ? seniorFteJ2
+            : year === 3
+              ? seniorFteJ3
+              : seniorFteJ4;
+      const juniorFte =
+        year === 1
+          ? juniorFteJ1
+          : year === 2
+            ? juniorFteJ2
+            : year === 3
+              ? juniorFteJ3
+              : juniorFteJ4;
+      const fte = seniorFte + juniorFte;
+      const sponsoringProMonat = sponsoringByYear(year);
+      let lizenzCashInflow = 0;
+
+      const lizenzPreisNachAlter = (age) => {
+        if (age < 12) return preisJ1;
+        if (age < 24) return preisAbJ2;
+        return preisAbJ3;
+      };
+
+      for (let i = 0; i < cohorts.length; i += 1) {
+        cohorts[i].age += 1;
+        if (cohorts[i].age === 12) {
+          cohorts[i].size *= renew1;
+          lizenzCashInflow += cohorts[i].size * preisAbJ2 * 12;
+        }
+        if (cohorts[i].age === 24) {
+          cohorts[i].size *= renew2;
+          lizenzCashInflow += cohorts[i].size * preisAbJ3 * 12;
+        }
+        if (cohorts[i].age === 36) {
+          cohorts[i].size *= renew3;
+          lizenzCashInflow += cohorts[i].size * preisAbJ3 * 12;
+        }
+      }
+
+      // Neukunden zahlen den Jahrespreis des ersten Vertragsjahres upfront.
+      lizenzCashInflow += neueKunden * preisJ1 * 12;
+      cohorts.push({ size: neueKunden, age: 0 });
+      const aktiveKunden = cohorts.reduce((sum, cohort) => sum + cohort.size, 0);
+
+      const umsatzLizenzen = cohorts.reduce((sum, cohort) => {
+        const cohortPreis = lizenzPreisNachAlter(cohort.age);
+        return sum + cohort.size * cohortPreis;
+      }, 0);
+      const gesamteinnahmen = umsatzLizenzen + sponsoringProMonat;
+      const cashwirksameEinnahmen = lizenzCashInflow + sponsoringProMonat;
+      const bruttolohn = (seniorFte * lohnSenior) + (juniorFte * lohnJunior);
+      const sozialabgaben = bruttolohn * (sozialabgabenProzent / 100);
+      const personalkosten = bruttolohn + sozialabgaben;
+      personalkostenByMonth[month] = personalkosten;
+      let sachkosten = 0;
+      if (sachkostenAuto) {
+        sachkosten = personalkosten * 0.25;
+      } else {
+        const subtotal = 
+          sachkostenWerte.werbung +
+          sachkostenWerte.grafik +
+          sachkostenWerte.treuhand +
+          sachkostenWerte.beratung +
+          sachkostenWerte.mandate +
+          sachkostenWerte.versicherung +
+          sachkostenWerte.raum +
+          sachkostenWerte.verwaltung +
+          sachkostenWerte.it +
+          (sachkostenWerte.spesen * fte) +
+          sachkostenWerte.finanz;
+        const reserve = subtotal * (sachkostenWerte.reserve / 100);
+        sachkosten = subtotal + reserve;
+      }
+      const spezialtopfKosten = month <= 36 ? (spezialtopf / 36) : 0;
+      const gesamtausgaben = personalkosten + sachkosten + spezialtopfKosten;
+      const netBurn = cashwirksameEinnahmen - gesamtausgaben;
+      cashbestand += netBurn + fundingInflow;
+ 
+      points.push({
+        month,
+        year,
+        aktiveKunden: Math.max(0, aktiveKunden),
+        umsatzLizenzen,
+        gesamteinnahmen,
+        cashwirksameEinnahmen,
+        gesamtausgaben,
+        bruttolohn,
+        sozialabgaben,
+        personalkosten,
+        spezialtopfKosten,
+        fundingInflow,
+        sponsoringProMonat,
+        cashbestand,
+      });
+    }
+
+    for (let i = 0; i < points.length; i += 1) {
+      const m = points[i].month;
+      let loehneNaechste3 = 0;
+      for (let k = 1; k <= 3; k += 1) {
+        const future = Math.min(MONTHS, m + k);
+        loehneNaechste3 += personalkostenByMonth[future];
+      }
+      const mindestliquiditaet = RESERVE_CHF + loehneNaechste3;
+      const liquiditaetspuffer = points[i].cashbestand - mindestliquiditaet;
+      points[i].mindestliquiditaet = mindestliquiditaet;
+      points[i].liquiditaetspuffer = liquiditaetspuffer;
+    }
+
+    return points;
+  }, [
+    lohnSenior,
+    lohnJunior,
+    sozialabgabenProzent,
+    spezialtopf,
+    seniorFteJ1,
+    seniorFteJ2,
+    seniorFteJ3,
+    seniorFteJ4,
+    juniorFteJ1,
+    juniorFteJ2,
+    juniorFteJ3,
+    juniorFteJ4,
+    sachkostenWerte,
+    neueKundenJ1,
+    neueKundenJ2,
+    neueKundenJ3,
+    neueKundenJ4,
+    preisAbJ2,
+    preisAbJ3,
+    preisJ1,
+    sachkostenAuto,
+    sponsoringJahr1,
+    sponsoringJahr2,
+    sponsoringJahr3,
+    sponsoringJahr4,
+    seedBetrag,
+    seedMonat,
+    seriesABetrag,
+    seriesAMonat,
+    verlaengerungNachJ1,
+    verlaengerungNachJ2,
+    verlaengerungNachJ3,
+  ]);
+
+  const month48 = simulation[simulation.length - 1];
+  const month36 = simulation[35] ?? month48;
+
+  const breakEvenMonat = useMemo(() => {
+    const hit = simulation.find((p) => p.gesamteinnahmen >= p.gesamtausgaben);
+    return hit ? hit.month : null;
+  }, [simulation]);
+  const breakEvenPoint = breakEvenMonat != null ? simulation[breakEvenMonat - 1] : null;
+
+  const ersteFloorVerletzung = useMemo(() => {
+    const hit = simulation.find((p) => p.liquiditaetspuffer < 0);
+    return hit ? hit.month : null;
+  }, [simulation]);
+
+  const runwayMonate = useMemo(() => {
+    if (startkapital < 0) return 0;
+    const firstNegative = simulation.find((point) => point.cashbestand < 0);
+    return firstNegative ? firstNegative.month : "48+";
+  }, [simulation, startkapital]);
+
+  const kapitalAnalyse = useMemo(() => {
+    const minPuffer = Math.min(...simulation.map((p) => p.liquiditaetspuffer));
+    const erforderlichesStartkapital = Math.max(0, startkapital - minPuffer);
+    const chartData = simulation.map((p) => ({
+      ...p,
+      startkapitalBeiTouchInMonat: Math.max(0, startkapital - p.liquiditaetspuffer),
+      erforderlichesStartkapital,
+    }));
+    return { minPuffer, erforderlichesStartkapital, chartData };
+  }, [simulation, startkapital]);
+
+  const gewinnjahrEbt = useMemo(() => {
+    const ebtByYear = simulation.reduce((acc, point) => {
+      const ebtMonat = point.gesamteinnahmen - point.gesamtausgaben;
+      acc[point.year] = (acc[point.year] ?? 0) + ebtMonat;
+      return acc;
+    }, {});
+    const firstProfitableYear = [1, 2, 3, 4].find((year) => (ebtByYear[year] ?? 0) > 0);
+    return {
+      year: firstProfitableYear ?? null,
+      ebt: firstProfitableYear ? ebtByYear[firstProfitableYear] : null,
+    };
+  }, [simulation]);
+
+  const calcDetails = useMemo(() => {
+    const renewRate1 = clampPercent(verlaengerungNachJ1) / 100;
+    const renewRate2 = clampPercent(verlaengerungNachJ2) / 100;
+
+    const y1_sold = neueKundenJ1 * 12;
+    const y1_rev = y1_sold * preisJ1 * 12;
+
+    const y2_renew_count = y1_sold * renewRate1;
+    const y2_renew_rev = y2_renew_count * preisAbJ2 * 12;
+    const y2_new_sold = neueKundenJ2 * 12;
+    const y2_new_rev = y2_new_sold * preisJ1 * 12;
+    const y2_total_rev = y2_renew_rev + y2_new_rev;
+
+    const y3_renew_orig_count = y2_renew_count * renewRate2;
+    const y3_renew_orig_rev = y3_renew_orig_count * preisAbJ3 * 12;
+    const y3_renew_y2_count = y2_new_sold * renewRate1;
+    const y3_renew_y2_rev = y3_renew_y2_count * preisAbJ2 * 12;
+    const y3_new_sold = neueKundenJ3 * 12;
+    const y3_new_rev = y3_new_sold * preisJ1 * 12;
+    const y3_total_rev = y3_renew_orig_rev + y3_renew_y2_rev + y3_new_rev;
+
+    return {
+      y1_sold,
+      y1_rev,
+      y2_renew_count,
+      y2_renew_rev,
+      y2_new_sold,
+      y2_new_rev,
+      y2_total_rev,
+      y3_renew_orig_count,
+      y3_renew_orig_rev,
+      y3_renew_y2_count,
+      y3_renew_y2_rev,
+      y3_new_sold,
+      y3_new_rev,
+      y3_total_rev,
+    };
+  }, [
+    neueKundenJ1,
+    neueKundenJ2,
+    neueKundenJ3,
+    preisJ1,
+    preisAbJ2,
+    preisAbJ3,
+    verlaengerungNachJ1,
+    verlaengerungNachJ2,
+  ]);
+
+  const kennzahlen = useMemo(() => {
+    const years = [1, 2, 3];
+    const results = years.map((y) => {
+      const startM = (y - 1) * 12 + 1;
+      const endM = y * 12;
+      const yearPoints = simulation.filter((p) => p.month >= startM && p.month <= endM);
+
+      const lastMonthPoint = simulation[endM - 1] || yearPoints[yearPoints.length - 1];
+      const arr = lastMonthPoint ? lastMonthPoint.umsatzLizenzen * 12 : 0;
+
+      const betriebskosten = yearPoints.reduce((sum, p) => sum + p.gesamtausgaben, 0);
+
+      const ebitan = yearPoints.reduce((sum, p) => sum + (p.gesamteinnahmen - p.gesamtausgaben), 0);
+
+      const gesamteinnahmen = yearPoints.reduce((sum, p) => sum + p.gesamteinnahmen, 0);
+      const bruttomarge = gesamteinnahmen > 0 ? (ebitan / gesamteinnahmen) * 100 : 0;
+
+      const totalBurn = yearPoints.reduce((sum, p) => sum + Math.max(0, p.gesamtausgaben - p.cashwirksameEinnahmen), 0);
+      const avgBurnRate = totalBurn / 12;
+
+      let runwayVal = "Profitabel";
+      const remainingSimulation = simulation.slice(endM);
+      const firstNeg = remainingSimulation.find((p) => p.cashbestand < 0);
+      if (firstNeg) {
+        runwayVal = `${firstNeg.month - endM} Mt.`;
+      } else {
+        const lastPoint = simulation[simulation.length - 1];
+        if (lastPoint && lastPoint.cashbestand < 0) {
+          runwayVal = "Insolvent";
+        } else {
+          const lastM = yearPoints[yearPoints.length - 1];
+          if (lastM && lastM.gesamtausgaben > lastM.cashwirksameEinnahmen) {
+            const currentCash = lastMonthPoint ? lastMonthPoint.cashbestand : 0;
+            const currentBurn = lastM.gesamtausgaben - lastM.cashwirksameEinnahmen;
+            if (currentBurn > 0) {
+              const estRunway = Math.round(currentCash / currentBurn);
+              runwayVal = estRunway > 48 ? "48+" : `${estRunway} Mt.`;
+            }
+          }
+        }
+      }
+
+      const kapitalbedarf = Math.max(0, -ebitan);
+
+      return {
+        year: y,
+        arr,
+        betriebskosten,
+        ebitan,
+        bruttomarge,
+        avgBurnRate,
+        runway: runwayVal,
+        kapitalbedarf,
+      };
+    });
+
+    const totalKapitalbedarf = results.reduce((sum, r) => sum + r.kapitalbedarf, 0);
+
+    return { results, totalKapitalbedarf };
+  }, [simulation]);
+
+  const totalVerkaufteAbosBeiBreakEven = useMemo(() => {
+    if (breakEvenMonat == null) return null;
+    let sum = 0;
+    for (let m = 1; m <= breakEvenMonat; m += 1) {
+      const y = yearByMonth(m);
+      const neueKunden =
+        y === 1
+          ? neueKundenJ1
+          : y === 2
+            ? neueKundenJ2
+            : y === 3
+              ? neueKundenJ3
+              : neueKundenJ4;
+      sum += neueKunden;
+    }
+    return sum;
+  }, [breakEvenMonat, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4]);
+
+  const guvData = useMemo(() => {
+    const years = [1, 2, 3];
+    const results = {};
+    
+    years.forEach((y) => {
+      const yearPoints = simulation.filter((p) => p.year === y);
+      
+      let umsatzLizenzen = 0;
+      let sponsoring = 0;
+      let personal = 0;
+      let tech = 0;
+      let marketing = 0;
+      let admin = 0;
+      
+      yearPoints.forEach((p) => {
+        umsatzLizenzen += p.umsatzLizenzen;
+        sponsoring += p.sponsoringProMonat;
+        personal += p.personalkosten;
+        
+        // Calculate sachkosten split
+        const totalSach = p.gesamtausgaben - p.personalkosten - p.spezialtopfKosten;
+        const itWeight = sachkostenWerte.it;
+        const mktWeight = sachkostenWerte.werbung;
+        
+        const seniorFte = y === 1 ? seniorFteJ1 : y === 2 ? seniorFteJ2 : y === 3 ? seniorFteJ3 : seniorFteJ4;
+        const juniorFte = y === 1 ? juniorFteJ1 : y === 2 ? juniorFteJ2 : y === 3 ? juniorFteJ3 : juniorFteJ4;
+        const currentFte = seniorFte + juniorFte;
+        
+        const spesenWeight = sachkostenWerte.spesen * currentFte;
+        const otherWeight = sachkostenWerte.grafik + sachkostenWerte.treuhand + sachkostenWerte.beratung +
+          sachkostenWerte.mandate + sachkostenWerte.versicherung + sachkostenWerte.raum +
+          sachkostenWerte.verwaltung + sachkostenWerte.finanz + spesenWeight;
+        
+        const reserveFactor = 1 + (sachkostenWerte.reserve / 100);
+        
+        const itTotal = itWeight * reserveFactor;
+        const mktTotal = mktWeight * reserveFactor;
+        const otherTotal = otherWeight * reserveFactor;
+        const totalWeight = itTotal + mktTotal + otherTotal;
+        
+        if (totalWeight > 0) {
+          tech += totalSach * (itTotal / totalWeight);
+          marketing += totalSach * (mktTotal / totalWeight);
+          admin += totalSach * (otherTotal / totalWeight) + p.spezialtopfKosten;
+        } else {
+          admin += p.spezialtopfKosten;
+        }
+      });
+      
+      const gesamtertrag = umsatzLizenzen + sponsoring;
+      const ebitda = gesamtertrag - personal - tech - marketing - admin;
+      const abschreibungen = 0;
+      const ebit = ebitda - abschreibungen;
+      const steuern = ebit > 0 ? ebit * 0.15 : 0;
+      const reingewinn = ebit - steuern;
+      
+      results[y] = {
+        umsatzLizenzen,
+        sponsoring,
+        gesamtertrag,
+        personal,
+        tech,
+        marketing,
+        admin,
+        ebitda,
+        abschreibungen,
+        ebit,
+        steuern,
+        reingewinn,
+      };
+    });
+    
+    return results;
+  }, [simulation, sachkostenWerte, sozialabgabenProzent, seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4, juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4, lohnSenior, lohnJunior]);
+
+  const dummyData = useMemo(() => {
+    // 1. Ratio
+    const totalPers = simulation.reduce((sum, p) => sum + p.personalkosten, 0);
+    const totalSach = simulation.reduce((sum, p) => sum + p.gesamtausgaben - p.personalkosten - p.spezialtopfKosten, 0);
+    const persRatio = totalPers + totalSach > 0 ? Math.round((totalPers / (totalPers + totalSach)) * 100) : 80;
+    const sachRatio = 100 - persRatio;
+
+    // 2. FTE values
+    const fteSeed = seniorFteJ1 + juniorFteJ1;
+    const fteSeriesA = seniorFteJ3 + juniorFteJ3;
+
+    // 3. Series A Year
+    const seriesAYear = Math.floor(((seriesAMonat === 0 ? 1 : seriesAMonat) - 1) / 12) + 1;
+    const seriesAStartYear = seriesAYear + 1;
+
+    // 4. Lizenzen
+    const seedActiveLizenzen = simulation[seriesAMonat === 0 ? 11 : seriesAMonat - 1]?.aktiveKunden ?? 0;
+    const seedAccounts = Math.round(seedActiveLizenzen / 5);
+    const seriesAActiveLizenzen = simulation[35]?.aktiveKunden ?? 0;
+
+    // 5. ARR target
+    const seedARR = (simulation[seriesAMonat === 0 ? 11 : seriesAMonat - 1]?.umsatzLizenzen ?? 0) * 12;
+    const seriesAARR = (simulation[35]?.umsatzLizenzen ?? 0) * 12;
+
+    // 6. Sponsoring
+    const sponsoringStartYear = sponsoringJahr1 > 0 ? 1 : sponsoringJahr2 > 0 ? 2 : sponsoringJahr3 > 0 ? 3 : sponsoringJahr4 > 0 ? 4 : 2;
+    const sponsoringAmountPerYear = (sponsoringStartYear === 1 ? sponsoringJahr1 : sponsoringStartYear === 2 ? sponsoringJahr2 : sponsoringStartYear === 3 ? sponsoringJahr3 : sponsoringJahr4) * 12;
+
+    // 7. Quarter names
+    const getQuarterOnly = (m) => "Q" + (Math.floor(((m === 0 ? 1 : m) - 1) % 12 / 3) + 1);
+    const seedQuarter = getQuarterOnly(seedMonat);
+    const seriesAQuarter = getQuarterOnly(seriesAMonat);
+
+    // 8. Break even
+    const breakEvenYear = breakEvenMonat != null ? yearByMonth(breakEvenMonat) : 3;
+
+    // 9. EBIT Marge Year 3
+    const y3Guv = guvData[3] || { ebit: 0, gesamtertrag: 0 };
+    const ebitMargeY3 = y3Guv.gesamtertrag > 0 ? Math.round((y3Guv.ebit / y3Guv.gesamtertrag) * 100) : 0;
+
+    // 10. Best / Worst case months
+    const baseCaseMonths = breakEvenMonat != null ? breakEvenMonat : 34;
+    const bestCaseMonths = Math.max(1, baseCaseMonths - 6);
+    const worstCaseMonths = Math.max(1, baseCaseMonths + 6);
+
+    return {
+      persRatio,
+      sachRatio,
+      fteSeed,
+      fteSeriesA,
+      seriesAYear,
+      seriesAStartYear,
+      seedActiveLizenzen,
+      seedAccounts,
+      seriesAActiveLizenzen,
+      seedARR,
+      seriesAARR,
+      sponsoringStartYear,
+      sponsoringAmountPerYear,
+      seedQuarter,
+      seriesAQuarter,
+      breakEvenYear,
+      ebitMargeY3,
+      baseCaseMonths,
+      bestCaseMonths,
+      worstCaseMonths,
+    };
+  }, [simulation, guvData, seedMonat, seriesAMonat, seniorFteJ1, juniorFteJ1, seniorFteJ3, juniorFteJ3, sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4, breakEvenMonat]);
+
+  const handleSaveTemplate = () => {
+    const name = window.prompt("Geben Sie einen Namen für das Template ein:", "Szenario 1");
+    if (!name) return;
+
+    const templates = JSON.parse(localStorage.getItem("hekto_templates") || "{}");
+    const data = {
+      seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
+      preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
+      sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
+      seniorFteJ1, seniorFteJ2, seniorFteJ3, seniorFteJ4,
+      juniorFteJ1, juniorFteJ2, juniorFteJ3, juniorFteJ4,
+      lohnSenior, lohnJunior, sozialabgabenProzent, spezialtopf, sachkostenAuto, sachkostenWerte
+    };
+    templates[name] = data;
+    localStorage.setItem("hekto_templates", JSON.stringify(templates));
+    alert(`Template "${name}" erfolgreich gespeichert!`);
+  };
+
+  const handleLoadTemplate = () => {
+    const templates = JSON.parse(localStorage.getItem("hekto_templates") || "{}");
+    const names = Object.keys(templates);
+    if (names.length === 0) {
+      alert("Keine gespeicherten Templates gefunden!");
+      return;
+    }
+
+    const name = window.prompt(
+      `Verfügbare Templates:\n- ${names.join("\n- ")}\n\nBitte geben Sie den genauen Namen des zu ladenden Templates ein:`,
+      names[0]
+    );
+    if (!name) return;
+
+    const data = templates[name];
+    if (!data) {
+      alert("Template nicht gefunden!");
+      return;
+    }
+
+    if (data.seedBetrag !== undefined) setSeedBetrag(data.seedBetrag);
+    if (data.seedMonat !== undefined) setSeedMonat(data.seedMonat);
+    if (data.seriesABetrag !== undefined) setSeriesABetrag(data.seriesABetrag);
+    if (data.seriesAMonat !== undefined) setSeriesAMonat(data.seriesAMonat);
+    if (data.preSeedAfondPerdu !== undefined) setPreSeedAfondPerdu(data.preSeedAfondPerdu);
+    if (data.preSeedBridge !== undefined) setPreSeedBridge(data.preSeedBridge);
+    
+    if (data.neueKundenJ1 !== undefined) setNeueKundenJ1(data.neueKundenJ1);
+    if (data.neueKundenJ2 !== undefined) setNeueKundenJ2(data.neueKundenJ2);
+    if (data.neueKundenJ3 !== undefined) setNeueKundenJ3(data.neueKundenJ3);
+    if (data.neueKundenJ4 !== undefined) setNeueKundenJ4(data.neueKundenJ4);
+    
+    if (data.preisJ1 !== undefined) setPreisJ1(data.preisJ1);
+    if (data.preisAbJ2 !== undefined) setPreisAbJ2(data.preisAbJ2);
+    if (data.preisAbJ3 !== undefined) setPreisAbJ3(data.preisAbJ3);
+    
+    if (data.verlaengerungNachJ1 !== undefined) setVerlaengerungNachJ1(data.verlaengerungNachJ1);
+    if (data.verlaengerungNachJ2 !== undefined) setVerlaengerungNachJ2(data.verlaengerungNachJ2);
+    if (data.verlaengerungNachJ3 !== undefined) setVerlaengerungNachJ3(data.verlaengerungNachJ3);
+    
+    if (data.sponsoringJahr1 !== undefined) setSponsoringJahr1(data.sponsoringJahr1);
+    if (data.sponsoringJahr2 !== undefined) setSponsoringJahr2(data.sponsoringJahr2);
+    if (data.sponsoringJahr3 !== undefined) setSponsoringJahr3(data.sponsoringJahr3);
+    if (data.sponsoringJahr4 !== undefined) setSponsoringJahr4(data.sponsoringJahr4);
+    
+    if (data.seniorFteJ1 !== undefined) setSeniorFteJ1(data.seniorFteJ1);
+    if (data.seniorFteJ2 !== undefined) setSeniorFteJ2(data.seniorFteJ2);
+    if (data.seniorFteJ3 !== undefined) setSeniorFteJ3(data.seniorFteJ3);
+    if (data.seniorFteJ4 !== undefined) setSeniorFteJ4(data.seniorFteJ4);
+    
+    if (data.juniorFteJ1 !== undefined) setJuniorFteJ1(data.juniorFteJ1);
+    if (data.juniorFteJ2 !== undefined) setJuniorFteJ2(data.juniorFteJ2);
+    if (data.juniorFteJ3 !== undefined) setJuniorFteJ3(data.juniorFteJ3);
+    if (data.juniorFteJ4 !== undefined) setJuniorFteJ4(data.juniorFteJ4);
+    
+    if (data.lohnSenior !== undefined) setLohnSenior(data.lohnSenior);
+    if (data.lohnJunior !== undefined) setLohnJunior(data.lohnJunior);
+    if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
+    if (data.spezialtopf !== undefined) setSpezialtopf(data.spezialtopf);
+    
+    if (data.sachkostenAuto !== undefined) setSachkostenAuto(data.sachkostenAuto);
+    if (data.sachkostenWerte !== undefined) setSachkostenWerte(data.sachkostenWerte);
+
+    alert(`Template "${name}" erfolgreich geladen!`);
+  };
+
+  const handleCopyText = () => {
+    const text = `9. Finanzplan (Zahlenteil)
+
+Die finanzielle Planung von Attaché spiegelt ein hochskalierbares, technologiegestütztes B2B-Geschäftsmodell wider. Um das Marktpotenzial der Executive Intelligence in der Schweiz zu beweisen und die Plattform anschliessend zum break Even zu skalieren, ist die Finanzierungsstruktur in drei Phasen unterteilt: Pre-Seed (Validierung), Seed (Markteintritt & Break-even) und Series A (Konsolidierung).
+
+9.1 Investitionsplan
+
+Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom der Produktlaunch hin zu Sales.
+
+* Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech): Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und des ersten Bezahlbreifings (Investitionsvolumen: CHF ${numberFormatter.format(seedBetrag)}).
+Series A* Ausbau des publizistischen Angebots auf insgesamt drei Bezahlbreifings sowie sowie Härtung der technischen Infrastruktur und redaktionelle Konsolidierung. (Investitionsvolumen: CHF ${numberFormatter.format(seriesABetrag)}).
+
+9.2 Betriebskostenplanung (Kostenstruktur / OpEx)
+
+Die betrieblichen Aufwendungen (OpEx) sind durch die Struktur des wissensbasierten Dienstleistungsmodells geprägt. Das strategische Verhältnis zwischen Personal- und Sachkosten ist langfristig auf ${dummyData.persRatio} % / ${dummyData.sachRatio} % optimiert, da die Technologie den manuellen Skalierungsaufwand massiv abfedert.
+
+* Personalaufwand: Bildet den grössten Kostenblock. Fachjournalisten und Analysten werden in einem fairen Lohnband vergütet. Der durchschnittliche Bruttolohn (errechnet als Durchschnitt des Lohnbands) beträgt CHF ${numberFormatter.format(lohnSenior)}. Das Team wächst gestaffelt von ${dummyData.fteSeed} FTE in der Seed-Phase auf ${dummyData.fteSeriesA} FTE nach dem Series A-Closing.
+* Technologie- & Serverkosten: Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF ${numberFormatter.format(sachkostenWerte.it)} pro Monat.
+* Vertrieb & horizontales Wachstum: Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF ${numberFormatter.format(sachkostenWerte.werbung * 12)} jährlich, um den horizontalen Rollout voranzutreiben.
+
+9.3 Umsatz- & Absatzplanung
+
+Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (ARR) mit jährlicher Vorauszahlung.
+
+* Seed-Phase (Jahr 1 bis ${dummyData.seriesAYear}): Fokus auf die Schweiz. Erreichen von ${numberFormatter.format(Math.round(dummyData.seedActiveLizenzen))} aktiven Lizenzen über ca. ${dummyData.seedAccounts} B2B-Accounts zu einem rabattierten Einstiegspreis von CHF ${numberFormatter.format(preisJ1 * 12)} pro Lizenz/Jahr (ARR-Ziel: CHF ${(dummyData.seedARR / 1000000).toFixed(2)} Mio.).
+* Series A-Phase (ab Jahr 2): Schrittweise Harmonisierung auf den regulären Zielpreis von CHF ${numberFormatter.format(preisAbJ3 * 12)} pro Lizenz/Jahr*. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) und den Eintritt in den DACH-Raum (horizontale Skalierung) steigt das Absatzvolumen auf 3'103 Lizenzen (ARR-Ziel: CHF 2.69 Mio.).
+* Zusatz-Umsätze: Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF ${numberFormatter.format(sponsoringJahr1 * 12)} pro Jahr bei. Ab dem 2. Geschäftsjahr sind es ${numberFormatter.format(sponsoringJahr2 * 12)} CHF pro jahr.
+
+9.4 Plan-Gewinn- & Verlustrechnung (GuV)
+
+Die folgende Tabelle zeigt die konsolidierte Erfolgsrechnung inklusive der Expansionsphase nach der Series A:
+
+Position (in CHF) | Geschäftsjahr 1 (Seed) | Geschäftsjahr 2${dummyData.breakEvenYear === 2 ? " (Break-even)" : ""} | Geschäftsjahr 3${dummyData.breakEvenYear === 3 ? " (Break-even)" : ""}${dummyData.seriesAYear === 3 ? " (Series A)" : ""}
+------------------|------------------------|--------------------------------|-------------------------
+Umsatzerlöse (ARR Lizenzen) | ${numberFormatter.format(Math.round(guvData[1].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[2].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[3].umsatzLizenzen))}
+Erlöse B2B-Sponsoring / Events | ${numberFormatter.format(Math.round(guvData[1].sponsoring))} | ${numberFormatter.format(Math.round(guvData[2].sponsoring))} | ${numberFormatter.format(Math.round(guvData[3].sponsoring))}
+Gesamtertrag | ${numberFormatter.format(Math.round(guvData[1].gesamtertrag))} | ${numberFormatter.format(Math.round(guvData[2].gesamtertrag))} | ${numberFormatter.format(Math.round(guvData[3].gesamtertrag))}
+- Personalaufwand (inkl. Sozialleistungen) | ${numberFormatter.format(Math.round(guvData[1].personal))} | ${numberFormatter.format(Math.round(guvData[2].personal))} | ${numberFormatter.format(Math.round(guvData[3].personal))}
+- Technischer Betriebsaufwand (Server/SaaS) | ${numberFormatter.format(Math.round(guvData[1].tech))} | ${numberFormatter.format(Math.round(guvData[2].tech))} | ${numberFormatter.format(Math.round(guvData[3].tech))}
+- Vertriebs- und Marketingkosten | ${numberFormatter.format(Math.round(guvData[1].marketing))} | ${numberFormatter.format(Math.round(guvData[2].marketing))} | ${numberFormatter.format(Math.round(guvData[3].marketing))}
+- Allgemeine Verwaltung / Legal & Treuhand | ${numberFormatter.format(Math.round(guvData[1].admin))} | ${numberFormatter.format(Math.round(guvData[2].admin))} | ${numberFormatter.format(Math.round(guvData[3].admin))}
+EBITDA | ${numberFormatter.format(Math.round(guvData[1].ebitda))} | ${numberFormatter.format(Math.round(guvData[2].ebitda))} | ${numberFormatter.format(Math.round(guvData[3].ebitda))}
+- Abschreibungen (Technologie/Hardware) | ${numberFormatter.format(Math.round(guvData[1].abschreibungen))} | ${numberFormatter.format(Math.round(guvData[2].abschreibungen))} | ${numberFormatter.format(Math.round(guvData[3].abschreibungen))}
+EBIT | ${numberFormatter.format(Math.round(guvData[1].ebit))} | ${numberFormatter.format(Math.round(guvData[2].ebit))} | ${numberFormatter.format(Math.round(guvData[3].ebit))}
+- Steuern | ${numberFormatter.format(Math.round(guvData[1].steuern))} | ${numberFormatter.format(Math.round(guvData[2].steuern))} | ${numberFormatter.format(Math.round(guvData[3].steuern))}
+Unternehmensergebnis (Reingewinn) | ${numberFormatter.format(Math.round(guvData[1].reingewinn))} | ${numberFormatter.format(Math.round(guvData[2].reingewinn))} | ${numberFormatter.format(Math.round(guvData[3].reingewinn))}
+
+9.5 Liquiditätsplan (Cashflow-Rechnung)
+
+Der Liquiditätsplan überwacht den Cash-Burn und stellt sicher, dass die Expansionsschritte jederzeit durch Finanzierungs-Cashflows gedeckt sind.
+
+* Seed-Zufluss: Der erste grosse Meilenstein erfolgt durch das Closing der Seed-Runde im Quartal ${dummyData.seedQuarter} in Höhe von CHF ${(seedBetrag / 1000000).toLocaleString('de-CH')} Mio., was den operativen Markteintritt in der Schweiz vollständig absichert.
+* Series A-Zufluss: Zur Beschleunigung des internationalen Wachstums und zum Ausbau der On-Demand-Infrastruktur fließt im Quartal ${dummyData.seriesAQuarter} des ${dummyData.seriesAYear}. Geschäftsjahres die Series A-Runde in Höhe von CHF ${(seriesABetrag / 1000000).toLocaleString('de-CH')} Mio. zu.
+* SaaS-Hebel & Runway: Dank der jährlichen Upfront-Zahlungen der B2B-Kunden profitiert Attaché von einem stark positiven Working Capital. Der kumulierte Cash-Bestand sinkt zu keinem Zeitpunkt unter die kritische Grenze von ${dummyData.baseCaseMonths >= 10 ? 3 : 2} Monaten operativer Fixkosten.
+
+9.6 Kapitalbedarfs- und Finanzierungsplan
+
+Der Gesamtkapitalbedarf bis zum Erreichen der globalen Profitabilität ist in drei klare Finanzierungstranchen unterteilt:
+
+1. Pre-Seed-Runde (Abgeschlossen): CHF ${numberFormatter.format(preSeedAfondPerdu)} als à-fond-perdu-Anschubfinanzierung für die Marktforschung durch Medienunternehmer sowie ein Wandeldarlehen (Bridge) von CHF ${numberFormatter.format(preSeedBridge)} für das MVP-Prototyping.
+2. Seed-Finanzierungsrunde (Aktuelle Phase): Einwerbung von mindestens CHF ${(seedBetrag / 1000000).toFixed(1)} Mio. bis CHF ${(seedBetrag / 1000000 * 1.5).toFixed(1)} Mio. zur Absicherung des Runways bis zum Schweizer Break-even. Abgabe von 20 % der Anteile am Gründungs-Cap-Table.
+3. Series A-Runde (In Vorbereitung): Geplante Aufnahme von CHF ${(seriesABetrag / 1000000).toFixed(1)} Mio. im Geschäftsjahr ${dummyData.seriesAYear}, initiiert durch institutionelle B2B-SaaS- und Growth-Investoren, um die Internationalisierungsachse zu finanzieren.
+4. Option Pool (ESOP): Reservierung von 10 % der Anteile zur langfristigen Incentivierung von Schlüsselpositionen (CTO, Head of Sales, Lead-Analysten).
+
+9.10 Break-Even-Analyse & Szenarien
+
+Die Gewinnschwelle (Schweizer Break-Even) wird plangemäss im ${dummyData.breakEvenYear}. Geschäftsjahr bei Erreichen von ${breakEvenPoint != null ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden)) : "—"} Lizenzen überschritten. Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
+
+Zur Absicherung wurden drei Szenarien modelliert:
+
+* Base Case (Erwarteter Verlauf): Erreichen des Schweizer Break-Even nach ${dummyData.baseCaseMonths} Monaten. Erfolgreiches Series A-Closing im Monat ${seriesAMonat} und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von ${dummyData.ebitMargeY3} % im Jahr 3.
+* Best Case (Skalierungs-Turbo): Extrem hohe Marktdurchdringung im ersten Jahr über direkte B2B2B-Verbandsrahmenverträge (Low CAC). Der Schweizer Markt trägt sich bereits nach ${dummyData.bestCaseMonths} Monaten selbst. Die Series A-Runde kann zu einer deutlich höheren Unternehmensbewertung als ursprünglich veranschlagt durchgeführt werden.
+* Worst Case (Verzögerte Expansion): Der Schweizer Markteintritt benötigt aufgrund von Spardruck in der Verwaltung ${dummyData.worstCaseMonths} Monate länger bis zur Profitabilität. Das Series A-Closing verschiebt sich nach hinten. Der verlängerte Runway wird durch das gestaffelte Abrufen einer im Gesellschaftervertrag verankerten Meilenstein-Tranche der Seed-Investoren in Höhe von CHF ${numberFormatter.format(spezialtopf)} überbrückt.`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      alert("Text erfolgreich kopiert!");
+    }).catch(err => {
+      console.error("Kopieren fehlgeschlagen: ", err);
+    });
+  };
+
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-4 p-4 2xl:px-8">
+      {/* Header */}
+      <header className="flex items-center justify-between border-2 border-black bg-white p-4">
+        <div>
+          <h1 className="text-[20px] font-bold text-black">Finanzmodell Hektopascal — Modell 3</h1>
+          <p className="text-xs font-normal text-black mt-1">Rollenbasierte Planung · 48 Monate (CHF) · Stand 13.06.2026</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleSaveTemplate}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
+            title="Aktuelle Werte als Template speichern"
+          >
+            Speichern
+          </button>
+          <button
+            type="button"
+            onClick={handleLoadTemplate}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
+            title="Gespeichertes Template laden"
+          >
+            Laden
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
+            title="Alle Werte auf Standard zurücksetzen"
+          >
+            Reset
+          </button>
+        </div>
+      </header>
+
+      {/* KPIs Grid */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KPI
+          title="Break-even (operativ)"
+          value={breakEvenMonat != null ? `ab Monat ${breakEvenMonat}` : "—"}
+          helpText="Erster Monat mit Einnahmen ≥ Ausgaben."
+        />
+        <KPI
+          title="Aktive Kunden bei Break Even"
+          value={
+            breakEvenPoint != null
+              ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden))
+              : "—"
+          }
+          helpText="Kundenbestand im ersten Monat mit Einnahmen ≥ Ausgaben."
+        />
+        <KPI
+          title="Total verkaufte Abos bei Break Even"
+          value={
+            totalVerkaufteAbosBeiBreakEven != null
+              ? numberFormatter.format(totalVerkaufteAbosBeiBreakEven)
+              : "—"
+          }
+          helpText="Summe aller verkauften Abonnements bis zum Break-even-Monat."
+        />
+        <KPI
+          title="Erforderliches Kapital (Seed + Series A)"
+          value={currencyFormatter.format(Math.max(0, seedBetrag + seriesABetrag - kapitalAnalyse.minPuffer))}
+          helpText="Gesamtes benötigtes Kapital (Seed + Series A), um eine Unterschreitung des Liquiditätspuffers zu verhindern."
+        />
+      </div>
+
+      {/* Tab Switcher */}
+      <div className="flex border-2 border-black bg-white">
+        <button
+          type="button"
+          className={`flex-1 py-3 text-sm font-bold border-r-2 border-black transition-colors ${
+            activeTab === "inputs" ? "bg-[#FF6B6B] text-black" : "bg-white text-black hover:bg-[#F5F5F5]"
+          }`}
+          onClick={() => setActiveTab("inputs")}
+        >
+          Eingaben (Treiber)
+        </button>
+        <button
+          type="button"
+          className={`flex-1 py-3 text-sm font-bold border-r-2 border-black transition-colors ${
+            activeTab === "calc" ? "bg-[#FF6B6B] text-black" : "bg-white text-black hover:bg-[#F5F5F5]"
+          }`}
+          onClick={() => setActiveTab("calc")}
+        >
+          Berechnung
+        </button>
+        <button
+          type="button"
+          className={`flex-1 py-3 text-sm font-bold border-r-2 border-black transition-colors ${
+            activeTab === "kennzahlen" ? "bg-[#FF6B6B] text-black" : "bg-white text-black hover:bg-[#F5F5F5]"
+          }`}
+          onClick={() => setActiveTab("kennzahlen")}
+        >
+          Kennzahlen
+        </button>
+        <button
+          type="button"
+          className={`flex-1 py-3 text-sm font-bold border-r-2 border-black transition-colors ${
+            activeTab === "charts" ? "bg-[#FF6B6B] text-black" : "bg-white text-black hover:bg-[#F5F5F5]"
+          }`}
+          onClick={() => setActiveTab("charts")}
+        >
+          Visualisierungen
+        </button>
+        <button
+          type="button"
+          className={`flex-1 py-3 text-sm font-bold transition-colors ${
+            activeTab === "dummy" ? "bg-[#FF6B6B] text-black" : "bg-white text-black hover:bg-[#F5F5F5]"
+          }`}
+          onClick={() => setActiveTab("dummy")}
+        >
+          Dummy
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "inputs" && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Card 1: Einnahmen-Treiber */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Einnahmen-Treiber</h2>
+            <div className="grid gap-4">
+              <div className="border-2 border-black bg-[#F5F5F5] p-3 space-y-3">
+                <span className="text-xs font-bold text-black uppercase block">Finanzierungsrunden / Funding</span>
+                
+                <div className="grid grid-cols-2 gap-3 border border-black p-2 bg-white">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Pre-Seed à-fond-perdu (CHF)</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={preSeedAfondPerdu}
+                      step={10000}
+                      onChange={(event) => setPreSeedAfondPerdu(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Pre-Seed Bridge (CHF)</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={preSeedBridge}
+                      step={10000}
+                      onChange={(event) => setPreSeedBridge(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 border border-black p-2 bg-white">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Seed Runde (CHF)</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={seedBetrag}
+                      step={50000}
+                      onChange={(event) => setSeedBetrag(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Seed Monat</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={seedMonat}
+                      min={0}
+                      max={48}
+                      onChange={(event) => setSeedMonat(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 border border-black p-2 bg-white">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Series A Runde (CHF)</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={seriesABetrag}
+                      step={100000}
+                      onChange={(event) => setSeriesABetrag(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-black">Series A Monat</span>
+                    <input
+                      type="number"
+                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                      value={seriesAMonat}
+                      min={0}
+                      max={48}
+                      onChange={(event) => setSeriesAMonat(clampNumber(Number(event.target.value)))}
+                    />
+                  </div>
+                </div>
+              </div>
+              <LabeledSliderInput label="Neue Kunden/Monat Jahr 1" value={neueKundenJ1} onChange={setNeueKundenJ1} max={300} />
+              <LabeledSliderInput label="Neue Kunden/Monat Jahr 2" value={neueKundenJ2} onChange={setNeueKundenJ2} max={300} />
+              <LabeledSliderInput label="Neue Kunden/Monat Jahr 3" value={neueKundenJ3} onChange={setNeueKundenJ3} max={300} />
+              <LabeledSliderInput label="Neue Kunden/Monat Jahr 4" value={neueKundenJ4} onChange={setNeueKundenJ4} max={300} />
+              <LabeledNumberInput label="Preis pro Lizenz Jahr 1 (CHF)" value={preisJ1} onChange={setPreisJ1} step={5} />
+              <LabeledNumberInput label="Preis pro Lizenz ab Jahr 2 (CHF)" value={preisAbJ2} onChange={setPreisAbJ2} step={5} />
+              <LabeledNumberInput label="Preis pro Lizenz ab Jahr 3 (CHF)" value={preisAbJ3} onChange={setPreisAbJ3} step={5} />
+              <div className="grid gap-3">
+                <span className="text-sm font-semibold text-black">Verlängerungsraten nach Vertragsjahr</span>
+                {[
+                  ["nach 1 Jahr", verlaengerungNachJ1, setVerlaengerungNachJ1],
+                  ["nach 2 Jahren", verlaengerungNachJ2, setVerlaengerungNachJ2],
+                  ["nach 3 Jahren", verlaengerungNachJ3, setVerlaengerungNachJ3],
+                ].map(([label, val, setter]) => (
+                  <div key={label} className="grid gap-1">
+                    <div className="flex justify-between text-xs text-black">
+                      <span>Verlängerung {label}</span>
+                      <span className="font-semibold text-black">{clampPercent(val).toFixed(1)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={30}
+                      max={100}
+                      step={0.1}
+                      value={val}
+                      onChange={(event) => setter(clampPercent(clampNumber(Number(event.target.value))))}
+                      className="w-full accent-[#FF6B6B]"
+                    />
+                  </div>
+                ))}
+              </div>
+              <LabeledNumberInput
+                label="Sponsoring/Monat Jahr 1 (CHF)"
+                value={sponsoringJahr1}
+                onChange={setSponsoringJahr1}
+                step={1000}
+              />
+              <LabeledNumberInput
+                label="Sponsoring/Monat Jahr 2 (CHF)"
+                value={sponsoringJahr2}
+                onChange={setSponsoringJahr2}
+                step={1000}
+              />
+              <LabeledNumberInput
+                label="Sponsoring/Monat Jahr 3 (CHF)"
+                value={sponsoringJahr3}
+                onChange={setSponsoringJahr3}
+                step={1000}
+              />
+              <LabeledNumberInput
+                label="Sponsoring/Monat Jahr 4 (CHF)"
+                value={sponsoringJahr4}
+                onChange={setSponsoringJahr4}
+                step={1000}
+              />
+            </div>
+          </article>
+
+          {/* Card 2: Ausgaben-Treiber */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Ausgaben-Treiber</h2>
+            <div className="grid gap-4">
+              <div className="border-2 border-black p-3 space-y-2">
+                <span className="text-sm font-bold text-black uppercase">Jahr 1 Staffing</span>
+                <LabeledSliderInput label="Senior FTE" value={seniorFteJ1} onChange={setSeniorFteJ1} min={0} max={20} />
+                <LabeledSliderInput label="Junior FTE" value={juniorFteJ1} onChange={setJuniorFteJ1} min={0} max={20} />
+              </div>
+              <div className="border-2 border-black p-3 space-y-2">
+                <span className="text-sm font-bold text-black uppercase">Jahr 2 Staffing</span>
+                <LabeledSliderInput label="Senior FTE" value={seniorFteJ2} onChange={setSeniorFteJ2} min={0} max={20} />
+                <LabeledSliderInput label="Junior FTE" value={juniorFteJ2} onChange={setJuniorFteJ2} min={0} max={20} />
+              </div>
+              <div className="border-2 border-black p-3 space-y-2">
+                <span className="text-sm font-bold text-black uppercase">Jahr 3 Staffing</span>
+                <LabeledSliderInput label="Senior FTE" value={seniorFteJ3} onChange={setSeniorFteJ3} min={0} max={20} />
+                <LabeledSliderInput label="Junior FTE" value={juniorFteJ3} onChange={setJuniorFteJ3} min={0} max={20} />
+              </div>
+              <div className="border-2 border-black p-3 space-y-2">
+                <span className="text-sm font-bold text-black uppercase">Jahr 4 Staffing</span>
+                <LabeledSliderInput label="Senior FTE" value={seniorFteJ4} onChange={setSeniorFteJ4} min={0} max={20} />
+                <LabeledSliderInput label="Junior FTE" value={juniorFteJ4} onChange={setJuniorFteJ4} min={0} max={20} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <LabeledNumberInput
+                  label="Bruttolohn Senior FTE / Monat (CHF)"
+                  value={lohnSenior}
+                  onChange={setLohnSenior}
+                  step={500}
+                  helpText={`Effektiv: ${currencyFormatter.format(lohnSenior * (1 + sozialabgabenProzent / 100))} / Monat`}
+                />
+                <LabeledNumberInput
+                  label="Bruttolohn Junior FTE / Monat (CHF)"
+                  value={lohnJunior}
+                  onChange={setLohnJunior}
+                  step={500}
+                  helpText={`Effektiv: ${currencyFormatter.format(lohnJunior * (1 + sozialabgabenProzent / 100))} / Monat`}
+                />
+              </div>
+              <div className="grid gap-1 border-2 border-black p-3 bg-[#F5F5F5]">
+                <div className="flex justify-between text-sm text-black">
+                  <span className="font-bold uppercase text-xs">Sozialabgaben & Vorsorge Arbeitgeber (%)</span>
+                  <span className="font-semibold text-black">{clampPercent(sozialabgabenProzent).toFixed(1)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={25}
+                  step={0.5}
+                  value={sozialabgabenProzent}
+                  onChange={(event) => setSozialabgabenProzent(clampPercent(clampNumber(Number(event.target.value))))}
+                  className="w-full accent-[#FF6B6B]"
+                />
+                <span className="text-[11px] text-gray-500 font-mono leading-tight">
+                  AHV/IV/EO: 5.30% | ALV: 1.10% | Pensionskasse (BVG), FAK, UVG, KTG: ca. 7–9%
+                </span>
+              </div>
+              <label className="flex items-start gap-3 border-2 border-black bg-white p-3 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-[#FF6B6B]"
+                  checked={sachkostenAuto}
+                  onChange={(event) => setSachkostenAuto(event.target.checked)}
+                />
+                <span className="text-sm font-semibold text-black">Sachkosten sind 25% der Personalkosten (80/20 Regel)</span>
+              </label>
+              {!sachkostenAuto && (
+                <div className="border-2 border-black bg-white p-4 space-y-4">
+                  <span className="text-sm font-bold text-black uppercase block border-b-2 border-black pb-1">
+                    Sach- und Dienstleistungsaufwand
+                  </span>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left font-mono text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b-2 border-black bg-[#F5F5F5] text-black">
+                          <th className="p-2 border-r-2 border-black font-bold">Kategorie</th>
+                          <th className="p-2 border-r-2 border-black font-bold">Typ</th>
+                          <th className="p-2 border-r-2 border-black font-bold w-32">Wert / Monat (CHF)</th>
+                          <th className="p-2 font-bold text-right">Info (Effektiv)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {SACHKOSTEN_META.map((meta) => {
+                          const value = sachkostenWerte[meta.id];
+
+                          let effectiveText = "";
+                          if (meta.id === "spesen") {
+                            effectiveText = "var. nach FTE";
+                          } else if (meta.id === "reserve") {
+                            effectiveText = `${value}% Puffer`;
+                          } else {
+                            effectiveText = `${numberFormatter.format(value)} CHF`;
+                          }
+
+                          return (
+                            <tr key={meta.id} className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                              <td className="p-2 border-r-2 border-black font-sans">
+                                <span className="font-semibold text-xs block">{meta.label}</span>
+                                <span className="text-[10px] text-gray-500 block leading-tight">{meta.desc}</span>
+                              </td>
+                              <td className="p-2 border-r-2 border-black uppercase text-[10px] font-bold text-center">
+                                <span className={meta.type === "fix" ? "text-blue-600 bg-blue-50 px-1 border border-blue-600" : "text-amber-600 bg-amber-50 px-1 border border-amber-600"}>
+                                  {meta.type}
+                                </span>
+                              </td>
+                              <td className="p-1 border-r-2 border-black">
+                                <input
+                                  type="number"
+                                  className="w-full border border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
+                                  value={value}
+                                  step={meta.step}
+                                  min={0}
+                                  onChange={(event) => {
+                                    const nextVal = clampNumber(Number(event.target.value));
+                                    setSachkostenWerte((prev) => ({
+                                      ...prev,
+                                      [meta.id]: nextVal
+                                    }));
+                                  }}
+                                />
+                              </td>
+                              <td className="p-2 text-right font-semibold">
+                                {effectiveText}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              <LabeledNumberInput
+                label="Spezialtopf / Einmaliger Puffer (CHF)"
+                value={spezialtopf}
+                onChange={setSpezialtopf}
+                step={5000}
+                helpText="Wird als flexibler Puffer gleichmässig über die ersten 3 Jahre (36 Monate) verteilt ausgegeben (ab Jahr 4 entfällt er)."
+              />
+            </div>
+          </article>
+        </div>
+      )}
+
+      {activeTab === "charts" && (
+        <div className="space-y-4">
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">Kundenwachstum</h2>
+            <p className="text-sm font-normal text-black">Aktive Kundenentwicklung über 48 Monate.</p>
+            <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={simulation} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    label={{ value: "Monat", position: "insideBottom", offset: -4 }}
+                    minTickGap={18}
+                  />
+                  <YAxis tick={{ fontSize: 14, fill: "#000000" }} width={56} />
+                  {breakEvenMonat != null && (
+                    <ReferenceLine
+                      x={breakEvenMonat}
+                      stroke="#00aa00"
+                      strokeDasharray="4 4"
+                      label={{ value: "Break-even", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
+                    />
+                  )}
+                  <Tooltip
+                    formatter={(value) => numberFormatter.format(Math.round(value))}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveKunden"
+                    name="Aktive Kunden"
+                    stroke="#FF6B6B"
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">Finanzen & Liquidität</h2>
+            <p className="text-sm font-normal text-black">
+              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Löhne für 3 Monate voraus). Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
+            </p>
+            <div className="mt-4 h-[34rem] 2xl:h-[38rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={simulation} margin={{ top: 12, right: 26, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis dataKey="month" tick={{ fontSize: 14, fill: "#000000" }} minTickGap={18} />
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={84}
+                    label={{ value: "Einnahmen/Ausgaben (CHF)", angle: -90, position: "insideLeft", fill: "#000000", fontSize: 12 }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={92}
+                    label={{ value: "Cash/Floor (CHF)", angle: 90, position: "insideRight", fill: "#000000", fontSize: 12 }}
+                  />
+                  {breakEvenMonat != null && (
+                    <ReferenceLine
+                      x={breakEvenMonat}
+                      yAxisId="left"
+                      stroke="#00aa00"
+                      strokeDasharray="4 4"
+                      label={{ value: "Break-even", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
+                    />
+                  )}
+                  <Tooltip
+                    formatter={(value, name) => [currencyFormatter.format(value), name]}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="gesamteinnahmen"
+                    name="Einnahmen"
+                    stroke="#00aa00"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="gesamtausgaben"
+                    name="Ausgaben"
+                    stroke="#FF2C2C"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="cashbestand"
+                    name="Cashbestand"
+                    stroke="#000000"
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="mindestliquiditaet"
+                    name="Mindestliquidität"
+                    stroke="#ff9900"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">Kapitalbedarf bei Floor-Touch</h2>
+            <p className="text-sm font-normal text-black">
+              Zeigt, welches Startkapital nötig wäre, um die Mindestliquidität genau in einem bestimmten Monat zu berühren.
+            </p>
+            <div className="mt-4 h-[30rem] 2xl:h-[34rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={kapitalAnalyse.chartData} margin={{ top: 12, right: 26, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis dataKey="month" tick={{ fontSize: 14, fill: "#000000" }} minTickGap={18} />
+                  <YAxis
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={100}
+                    label={{ value: "Startkapital (CHF)", angle: -90, position: "insideLeft", fill: "#000000", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    formatter={(value, name) => [currencyFormatter.format(value), name]}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="startkapitalBeiTouchInMonat"
+                    name="Startkapital bei Touch in Monat"
+                    stroke="#FF6B6B"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="erforderlichesStartkapital"
+                    name="Minimal nötiges Startkapital"
+                    stroke="#000000"
+                    strokeDasharray="6 4"
+                    strokeWidth={2.2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+        </div>
+      )}
+
+      {activeTab === "calc" && (
+        <div className="space-y-4">
+          {/* Year 1 Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 1</h2>
+            <p className="text-sm font-normal text-black mb-4">
+              Im ersten Jahr verkaufen wir <strong>{neueKundenJ1}</strong> Kunden pro Monat à <strong>{preisJ1} CHF</strong>.
+            </p>
+            <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+              <div>
+                <span className="font-semibold text-gray-600">Verkaufte Lizenzen:</span>
+                <div className="text-[16px] font-bold mt-1">
+                  {neueKundenJ1} Lizenzen/Monat * 12 Monate = {numberFormatter.format(calcDetails.y1_sold)} Lizenzen
+                </div>
+              </div>
+              <hr className="border-black border-dashed" />
+              <div>
+                <span className="font-semibold text-gray-600">Einnahmen (upfront):</span>
+                <div className="text-[16px] font-bold mt-1 text-[#00aa00]">
+                  {numberFormatter.format(calcDetails.y1_sold)} Lizenzen * {preisJ1} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y1_rev)}
+                </div>
+              </div>
+              <hr className="border-black border-dashed" />
+              <div>
+                <span className="font-semibold text-gray-600">ARR (Annual Recurring Revenue) am Ende von Jahr 1:</span>
+                <div className="text-[16px] font-bold mt-1 text-blue-600">
+                  MRR (Monat 12): {currencyFormatter.format(calcDetails.y1_rev / 12)} / Monat<br />
+                  ARR (MRR * 12): {currencyFormatter.format(calcDetails.y1_rev)} / Jahr
+                </div>
+              </div>
+            </div>
+          </article>
+
+          {/* Year 2 Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 2</h2>
+            <p className="text-sm font-normal text-black mb-4">
+              Bestandskunden aus Jahr 1 verlängern zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
+              Neukunden im Jahr 2 (<strong>{neueKundenJ2}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
+            </p>
+            <div className="space-y-4">
+              {/* Old customers */}
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">A) Verlängerung Bestandskunden (Jahr 1)</span>
+                <div>
+                  <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
+                  <div className="text-[15px] font-semibold mt-1">
+                    {numberFormatter.format(calcDetails.y1_sold)} Lizenzen * {verlaengerungNachJ1}% = {numberFormatter.format(Math.round(calcDetails.y2_renew_count))} Lizenzen
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Einnahmen:</span>
+                  <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                    {numberFormatter.format(Math.round(calcDetails.y2_renew_count))} Lizenzen * {preisAbJ2} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y2_renew_rev)}
+                  </div>
+                </div>
+              </div>
+
+              {/* New customers */}
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">B) Neue Kunden Jahr 2</span>
+                <div>
+                  <span className="font-semibold text-gray-600">Verkaufte Lizenzen:</span>
+                  <div className="text-[15px] font-semibold mt-1">
+                    {neueKundenJ2} Lizenzen/Monat * 12 Monate = {numberFormatter.format(calcDetails.y2_new_sold)} Lizenzen
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Einnahmen:</span>
+                  <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                    {numberFormatter.format(calcDetails.y2_new_sold)} Lizenzen * {preisJ1} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y2_new_rev)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Year 2 Total */}
+              <div className="bg-black text-white p-4 font-mono text-sm border-2 border-black flex justify-between items-center">
+                <span className="font-bold">Gesamteinnahmen Jahr 2:</span>
+                <span className="text-[18px] font-bold text-[#4ade80]">
+                  {currencyFormatter.format(calcDetails.y2_total_rev)}
+                </span>
+              </div>
+
+              {/* Year 2 ARR */}
+              <div className="bg-[#EBF4FF] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">ARR (Annual Recurring Revenue) am Ende von Jahr 2</span>
+                <div className="mt-2 space-y-1">
+                  <div>MRR Bestandskunden: {currencyFormatter.format(calcDetails.y2_renew_rev / 12)} / Monat</div>
+                  <div>MRR Neukunden: {currencyFormatter.format(calcDetails.y2_new_rev / 12)} / Monat</div>
+                  <div className="font-bold border-t border-black pt-1 mt-1">
+                    Gesamt-MRR (Monat 24): {currencyFormatter.format(calcDetails.y2_total_rev / 12)} / Monat
+                  </div>
+                  <div className="font-bold text-blue-600 text-[15px] mt-1">
+                    Gesamt-ARR (MRR * 12): {currencyFormatter.format(calcDetails.y2_total_rev)} / Jahr
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          {/* Year 3 Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 3</h2>
+            <p className="text-sm font-normal text-black mb-4">
+              Kunden aus Jahr 1 verlängern ein zweites Mal zu <strong>{verlaengerungNachJ2}%</strong> zum Preis von <strong>{preisAbJ3} CHF</strong>.<br />
+              Kunden aus Jahr 2 verlängern das erste Mal zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
+              Neukunden im Jahr 3 (<strong>{neueKundenJ3}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
+            </p>
+            <div className="space-y-4">
+              {/* Original cohort renewal */}
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">A) Zweite Verlängerung (Originalkunden Jahr 1)</span>
+                <div>
+                  <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
+                  <div className="text-[15px] font-semibold mt-1">
+                    {numberFormatter.format(Math.round(calcDetails.y2_renew_count))} Lizenzen * {verlaengerungNachJ2}% = {numberFormatter.format(Math.round(calcDetails.y3_renew_orig_count))} Lizenzen
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Einnahmen:</span>
+                  <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                    {numberFormatter.format(Math.round(calcDetails.y3_renew_orig_count))} Lizenzen * {preisAbJ3} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y3_renew_orig_rev)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Year 2 cohort renewal */}
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">B) Erste Verlängerung (Kunden Jahr 2)</span>
+                <div>
+                  <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
+                  <div className="text-[15px] font-semibold mt-1">
+                    {numberFormatter.format(calcDetails.y2_new_sold)} Lizenzen * {verlaengerungNachJ1}% = {numberFormatter.format(Math.round(calcDetails.y3_renew_y2_count))} Lizenzen
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Einnahmen:</span>
+                  <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                    {numberFormatter.format(Math.round(calcDetails.y3_renew_y2_count))} Lizenzen * {preisAbJ2} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y3_renew_y2_rev)}
+                  </div>
+                </div>
+              </div>
+
+              {/* New customers */}
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">C) Neue Kunden Jahr 3</span>
+                <div>
+                  <span className="font-semibold text-gray-600">Verkaufte Lizenzen:</span>
+                  <div className="text-[15px] font-semibold mt-1">
+                    {neueKundenJ3} Lizenzen/Monat * 12 Monate = {numberFormatter.format(calcDetails.y3_new_sold)} Lizenzen
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Einnahmen:</span>
+                  <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                    {numberFormatter.format(calcDetails.y3_new_sold)} Lizenzen * {preisJ1} CHF * 12 Monate = {currencyFormatter.format(calcDetails.y3_new_rev)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Year 3 Total */}
+              <div className="bg-black text-white p-4 font-mono text-sm border-2 border-black flex justify-between items-center">
+                <span className="font-bold">Gesamteinnahmen Jahr 3:</span>
+                <span className="text-[18px] font-bold text-[#4ade80]">
+                  {currencyFormatter.format(calcDetails.y3_total_rev)}
+                </span>
+              </div>
+
+              {/* Year 3 ARR */}
+              <div className="bg-[#EBF4FF] border-2 border-black p-4 font-mono text-sm text-black">
+                <span className="font-bold text-xs uppercase text-gray-600">ARR (Annual Recurring Revenue) am Ende von Jahr 3</span>
+                <div className="mt-2 space-y-1">
+                  <div>MRR Originalkunden (Jahr 1): {currencyFormatter.format(calcDetails.y3_renew_orig_rev / 12)} / Monat</div>
+                  <div>MRR Bestandskunden (Jahr 2): {currencyFormatter.format(calcDetails.y3_renew_y2_rev / 12)} / Monat</div>
+                  <div>MRR Neukunden (Jahr 3): {currencyFormatter.format(calcDetails.y3_new_rev / 12)} / Monat</div>
+                  <div className="font-bold border-t border-black pt-1 mt-1">
+                    Gesamt-MRR (Monat 36): {currencyFormatter.format(calcDetails.y3_total_rev / 12)} / Monat
+                  </div>
+                  <div className="font-bold text-blue-600 text-[15px] mt-1">
+                    Gesamt-ARR (MRR * 12): {currencyFormatter.format(calcDetails.y3_total_rev)} / Jahr
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          {/* Break-even Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Break-even (operativ)</h2>
+            <p className="text-sm font-normal text-black mb-4">
+              Der operative Break-Even ist der erste Monat, in dem die monatlichen Einnahmen (Lizenz-MRR + Sponsoring) die monatlichen Ausgaben (Personalkosten + Sachkosten) decken oder übertreffen:
+              <br />
+              <span className="font-semibold">Bedingung:</span> Einnahmen ≥ Ausgaben
+            </p>
+
+            {breakEvenMonat != null && breakEvenPoint != null ? (
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <div className="text-[16px] font-bold text-[#00aa00] mb-2">
+                  Erreicht in Monat {breakEvenMonat} (Jahr {breakEvenPoint.year})
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-600">Monatliche Einnahmen in Monat {breakEvenMonat}:</span>
+                  <div className="pl-4 mt-1">
+                    Lizenz-Umsatz (MRR): {currencyFormatter.format(breakEvenPoint.umsatzLizenzen)} / Monat<br />
+                    Sponsoring: {currencyFormatter.format(breakEvenPoint.sponsoringProMonat)} / Monat<br />
+                    <span className="font-bold">Gesamteinnahmen: {currencyFormatter.format(breakEvenPoint.gesamteinnahmen)} / Monat</span>
+                  </div>
+                </div>
+                <hr className="border-black border-dashed" />
+                <div>
+                  <span className="font-semibold text-gray-600">Monatliche Ausgaben in Monat {breakEvenMonat}:</span>
+                  <div className="pl-4 mt-1 space-y-1">
+                    <div>
+                      <span className="font-semibold">Personalkosten gesamt:</span> {currencyFormatter.format(breakEvenPoint.personalkosten)} / Monat
+                      <div className="text-[12px] text-gray-600 pl-4 border-l-2 border-black ml-1 mt-0.5 font-mono">
+                        Bruttolöhne: {currencyFormatter.format(breakEvenPoint.bruttolohn)} / Monat<br />
+                        Sozialabgaben & Vorsorge ({clampPercent(sozialabgabenProzent).toFixed(1)}%): {currencyFormatter.format(breakEvenPoint.sozialabgaben)} / Monat
+                      </div>
+                    </div>
+                    <div>Sachkosten: {currencyFormatter.format(breakEvenPoint.gesamtausgaben - breakEvenPoint.personalkosten - breakEvenPoint.spezialtopfKosten)} / Monat</div>
+                    {breakEvenPoint.spezialtopfKosten > 0 && (
+                      <div className="text-[12px] text-gray-600 pl-4 border-l-2 border-black ml-1 mt-0.5 font-mono">
+                        Spezialtopf-Tranche: {currencyFormatter.format(breakEvenPoint.spezialtopfKosten)} / Monat (bis Monat 36)
+                      </div>
+                    )}
+                    <div className="font-bold pt-1 mt-1 border-t border-black">Gesamtausgaben: {currencyFormatter.format(breakEvenPoint.gesamtausgaben)} / Monat</div>
+                  </div>
+                </div>
+                <hr className="border-black border-dashed" />
+                <div className="font-bold text-[#00aa00] text-[15px]">
+                  Netto-Ergebnis (Einnahmen - Ausgaben): +{currencyFormatter.format(breakEvenPoint.gesamteinnahmen - breakEvenPoint.gesamtausgaben)} / Monat
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#FFF0F0] border-2 border-black p-4 font-mono text-sm text-red-600 font-bold">
+                Kein Break-Even innerhalb der 48 Monate mit den aktuellen Parametern.
+              </div>
+            )}
+          </article>
+        </div>
+      )}
+
+      {activeTab === "kennzahlen" && (
+        <div className="space-y-4">
+          {/* Kapitalbedarf Header Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[20px] font-bold text-black border-b-2 border-black pb-2 mb-4">Finanzkennzahlen</h2>
+            <div className="text-lg font-bold text-[#FF6B6B] bg-red-50 border-2 border-black p-4 inline-block">
+              Wir rechnen mit einem Kapitalbedarf von rund {currencyFormatter.format(kennzahlen.totalKapitalbedarf)} (GJ 1 - GJ 3)
+            </div>
+          </article>
+
+          {/* Table Card */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-sans border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-black bg-[#F5F5F5] text-black text-sm">
+                    <th className="p-3 border-r-2 border-black font-bold">Kennzahl</th>
+                    <th className="p-3 border-r-2 border-black font-bold text-center w-1/4">GJ 1</th>
+                    <th className="p-3 border-r-2 border-black font-bold text-center w-1/4">GJ 2</th>
+                    <th className="p-3 font-bold text-center w-1/4">GJ 3</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono text-sm">
+                  {/* ARR Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">ARR</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center font-bold text-blue-600">
+                        {currencyFormatter.format(r.arr)}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Betriebskosten Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Betriebskosten</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center text-red-600">
+                        {currencyFormatter.format(r.betriebskosten)}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* EBITA Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">EBITA</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className={`p-3 border-r-2 last:border-r-0 border-black text-center font-bold ${r.ebitan >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {currencyFormatter.format(r.ebitan)}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Bruttomarge Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Bruttomarge (inkl. PersKo)</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className={`p-3 border-r-2 last:border-r-0 border-black text-center font-bold ${r.bruttomarge >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {r.bruttomarge.toFixed(2)}%
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Net Burn Rate Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Net Burn Rate pro Mt.</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center font-semibold">
+                        {r.avgBurnRate <= 0 ? (
+                          <span className="text-green-600 bg-green-50 px-1 border border-green-600 uppercase text-xs">Profitabel</span>
+                        ) : (
+                          `${currencyFormatter.format(r.avgBurnRate)} / Monat`
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Cash Runway Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Cash Runway</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center font-bold">
+                        {r.runway === "Profitabel" ? (
+                          <span className="text-green-600 bg-green-50 px-1 border border-green-600 uppercase text-xs">Profitabel</span>
+                        ) : (
+                          r.runway
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Kapitalbedarf Row */}
+                  <tr className="hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Kapitalbedarf</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className={`p-3 border-r-2 last:border-r-0 border-black text-center font-bold ${r.kapitalbedarf > 0 ? "text-red-600" : "text-green-600"}`}>
+                        {currencyFormatter.format(r.kapitalbedarf)}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          {/* Explanation Section */}
+          <article className="border-2 border-black bg-[#F5F5F5] p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h3 className="text-[16px] font-bold text-black border-b-2 border-black pb-1 mb-3">Erklärung der Kennzahlen</h3>
+            <div className="grid gap-4 md:grid-cols-2 text-sm text-black">
+              <div className="space-y-3">
+                <div>
+                  <span className="font-bold block">ARR (Annual Recurring Revenue)</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Lizenzumsatz des letzten Monats des jeweiligen Jahres mal 12.
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">Betriebskosten</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Summe aller Betriebsausgaben (Personalkosten inkl. Sozialabgaben, Sachkosten und Spezialtopf-Tranchen) des jeweiligen Jahres.
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">EBITA</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Operatives Gesamtergebnis vor Zinsen, Steuern und Abschreibungen (Einnahmen minus Betriebskosten).
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <span className="font-bold block">Bruttomarge (inkl. PersKo)</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Das prozentuale Verhältnis von EBITA zu den Gesamteinnahmen: (EBITA / Gesamteinnahmen) * 100% für das jeweilige Jahr.
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">Net Burn Rate pro Mt.</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Durchschnittlicher monatlicher operativer Cash-Abfluss (Ausgaben minus cashwirksame Einnahmen). Ist der Cashflow positiv, gilt es als "Profitabel".
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">Cash Runway</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Anzahl Monate ab Ende des jeweiligen Jahres, bis der Cashbestand unter 0 fällt (basierend auf dem weiteren Verlauf der Simulation). Bei dauerhaft positivem Cashbestand wird "Profitabel" angezeigt.
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">Kapitalbedarf</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Der operative Fehlbetrag (negatives EBITA) des jeweiligen Jahres, der durch Kapitalzufuhr gedeckt werden muss.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      )}
+
+      {activeTab === "dummy" && (
+        <div className="space-y-6">
+          <article className="border-2 border-black bg-white p-8 hover:shadow-[4px_4px_0px_#000] transition-shadow duration-200">
+            <div className="flex justify-between items-center border-b-4 border-black pb-2 mb-6">
+              <h2 className="text-[24px] font-bold text-black uppercase tracking-wider">
+                9. Finanzplan (Zahlenteil)
+              </h2>
+              <button
+                type="button"
+                onClick={handleCopyText}
+                className="border-2 border-black bg-white px-3 py-1.5 text-xs font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer flex items-center gap-1.5"
+                title="Gesamtes Kapitel als Text kopieren"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z" />
+                </svg>
+                Text kopieren
+              </button>
+            </div>
+            <p className="text-sm text-black leading-relaxed mb-6 font-sans">
+              Die finanzielle Planung von Attaché spiegelt ein hochskalierbares, technologiegestütztes B2B-Geschäftsmodell wider. Um das Marktpotenzial der Executive Intelligence in der Schweiz zu beweisen und die Plattform anschliessend zum break Even zu skalieren, ist die Finanzierungsstruktur in drei Phasen unterteilt: <strong>Pre-Seed</strong> (Validierung), <strong>Seed</strong> (Markteintritt & Break-even) und <strong>Series A</strong> (Konsolidierung).
+            </p>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.1 Investitionsplan
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom der Produktlaunch hin zu Sales.
+            </p>
+            <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
+              <li>
+                <strong>Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech):</strong> Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und des ersten Bezahlbreifings (Investitionsvolumen: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(seedBetrag)}</span>).
+              </li>
+              <li>
+                <strong>Series A*</strong> Ausbau des publizistischen Angebots auf insgesamt drei Bezahlbreifings sowie sowie Härtung der technischen Infrastruktur und redaktionelle Konsolidierung. (Investitionsvolumen: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(seriesABetrag)}</span>).
+              </li>
+            </ul>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.2 Betriebskostenplanung (Kostenstruktur / OpEx)
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die betrieblichen Aufwendungen (OpEx) sind durch die Struktur des wissensbasierten Dienstleistungsmodells geprägt. Das strategische Verhältnis zwischen Personal- und Sachkosten ist langfristig auf <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.persRatio} % / {dummyData.sachRatio} %</span> optimiert, da die Technologie den manuellen Skalierungsaufwand massiv abfedert.
+            </p>
+            <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
+              <li>
+                <strong>Personalaufwand:</strong> Bildet den grössten Kostenblock. Fachjournalisten und Analysten werden in einem fairen Lohnband vergütet. Der durchschnittliche Bruttolohn (errechnet als Durchschnitt des Lohnbands) beträgt CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(lohnSenior)}</span>. Das Team wächst gestaffelt von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeed}</span> FTE in der Seed-Phase auf <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.fteSeriesA}</span> FTE nach dem Series A-Closing.
+              </li>
+              <li>
+                <strong>Technologie- & Serverkosten:</strong> Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenWerte.it)}</span> pro Monat.
+              </li>
+              <li>
+                <strong>Vertrieb & horizontales Wachstum:</strong> Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sachkostenWerte.werbung * 12)}</span> jährlich, um den horizontalen Rollout voranzutreiben.
+              </li>
+            </ul>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.3 Umsatz- & Absatzplanung
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (ARR) mit jährlicher Vorauszahlung.
+            </p>
+            <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
+              <li>
+                <strong>Seed-Phase (Jahr <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">1</span> bis <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seriesAYear}</span>):</strong> Fokus auf die Schweiz. Erreichen von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(Math.round(dummyData.seedActiveLizenzen))}</span> aktiven Lizenzen über ca. <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seedAccounts}</span> B2B-Accounts zu einem rabattierten Einstiegspreis von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preisJ1 * 12)}</span> pro Lizenz/Jahr (ARR-Ziel: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(dummyData.seedARR / 1000000).toFixed(2)}</span> Mio.).
+              </li>
+              <li>
+                <strong>Series A-Phase (ab Jahr 2):</strong> Schrittweise Harmonisierung auf den regulären Zielpreis von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preisAbJ3 * 12)}</span> pro Lizenz/Jahr*. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) und den Eintritt in den DACH-Raum (horizontale Skalierung) steigt das Absatzvolumen auf 3'103 Lizenzen (ARR-Ziel: CHF 2.69 Mio.).
+              </li>
+              <li>
+                <strong>Zusatz-Umsätze:</strong> Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sponsoringJahr1 * 12)}</span> pro Jahr bei. Ab dem 2. Geschäftsjahr sind es <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sponsoringJahr2 * 12)}</span> CHF pro Jahr.
+              </li>
+            </ul>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.4 Plan-Gewinn- & Verlustrechnung (GuV)
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die folgende Tabelle zeigt die konsolidierte Erfolgsrechnung inklusive der Expansionsphase nach der Series A:
+            </p>
+            <div className="overflow-x-auto border-2 border-black mb-6">
+              <table className="w-full text-left font-sans border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-black bg-[#F5F5F5] text-black text-xs font-bold uppercase">
+                    <th className="p-2 border-r-2 border-black">Position (in CHF)</th>
+                    <th className="p-2 border-r-2 border-black text-center">Geschäftsjahr 1 (Seed)</th>
+                    <th className="p-2 border-r-2 border-black text-center">Geschäftsjahr 2{dummyData.breakEvenYear === 2 ? " (Break-even)" : ""}</th>
+                    <th className="p-2 text-center">Geschäftsjahr 3{dummyData.breakEvenYear === 3 ? " (Break-even)" : ""}{dummyData.seriesAYear === 3 ? " (Series A)" : ""}</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono text-xs text-black">
+                  <tr className="border-b border-black hover:bg-[#FAF9F6] font-sans">
+                    <td className="p-2 border-r-2 border-black font-bold">Umsatzerlöse (ARR Lizenzen)</td>
+                    <td className="p-2 border-r-2 border-black text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].umsatzLizenzen))}</td>
+                    <td className="p-2 border-r-2 border-black text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].umsatzLizenzen))}</td>
+                    <td className="p-2 text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].umsatzLizenzen))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">Erlöse B2B-Sponsoring / Events</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].sponsoring))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].sponsoring))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].sponsoring))}</td>
+                  </tr>
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6] font-sans font-bold bg-[#F9F9F9]">
+                    <td className="p-2 border-r-2 border-black">Gesamtertrag</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[1].gesamtertrag))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[2].gesamtertrag))}</td>
+                    <td className="p-2 text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[3].gesamtertrag))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Personalaufwand (inkl. Sozialleistungen)</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].personal))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].personal))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].personal))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Technischer Betriebsaufwand (Server/SaaS)</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].tech))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].tech))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].tech))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Vertriebs- und Marketingkosten</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].marketing))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].marketing))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].marketing))}</td>
+                  </tr>
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Allgemeine Verwaltung / Legal & Treuhand</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].admin))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].admin))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].admin))}</td>
+                  </tr>
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6] font-sans font-bold bg-[#F9F9F9]">
+                    <td className="p-2 border-r-2 border-black">EBITDA</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[1].ebitda))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[2].ebitda))}</td>
+                    <td className="p-2 text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[3].ebitda))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Abschreibungen (Technologie/Hardware)</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].abschreibungen))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].abschreibungen))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].abschreibungen))}</td>
+                  </tr>
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6] font-sans font-bold bg-[#F9F9F9]">
+                    <td className="p-2 border-r-2 border-black">EBIT</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[1].ebit))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[2].ebit))}</td>
+                    <td className="p-2 text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[3].ebit))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">- Steuern</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].steuern))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].steuern))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].steuern))}</td>
+                  </tr>
+                  <tr className="hover:bg-[#FAF9F6] font-sans font-bold bg-[#FFF2A3]">
+                    <td className="p-2 border-r-2 border-black">Unternehmensergebnis (Reingewinn)</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[1].reingewinn))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[2].reingewinn))}</td>
+                    <td className="p-2 text-center bg-yellow-100">{numberFormatter.format(Math.round(guvData[3].reingewinn))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.5 Liquiditätsplan (Cashflow-Rechnung)
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Der Liquiditätsplan überwacht den Cash-Burn und stellt sicher, dass die Expansionsschritte jederzeit durch Finanzierungs-Cashflows gedeckt sind.
+            </p>
+            <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
+              <li>
+                <strong>Seed-Zufluss:</strong> Der erste grosse Meilenstein erfolgt durch das Closing der Seed-Runde im Quartal <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seedQuarter}</span> in Höhe von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(seedBetrag / 1000000).toLocaleString('de-CH')}</span> Mio., was den operativen Markteintritt in der Schweiz vollständig absichert.
+              </li>
+              <li>
+                <strong>Series A-Zufluss:</strong> Zur Beschleunigung des internationalen Wachstums und zum Ausbau der On-Demand-Infrastruktur fließt im Quartal <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seriesAQuarter}</span> des <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seriesAYear}</span>. Geschäftsjahres die Series A-Runde in Höhe von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(seriesABetrag / 1000000).toLocaleString('de-CH')}</span> Mio. zu.
+              </li>
+              <li>
+                <strong>SaaS-Hebel & Runway:</strong> Dank der jährlichen Upfront-Zahlungen der B2B-Kunden profitiert Attaché von einem stark positiven Working Capital. Der kumulierte Cash-Bestand sinkt zu keinem Zeitpunkt unter die kritische Grenze von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.baseCaseMonths >= 10 ? 3 : 2}</span> Monaten operativer Fixkosten.
+              </li>
+            </ul>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.6 Kapitalbedarfs- und Finanzierungsplan
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Der Gesamtkapitalbedarf bis zum Erreichen der globalen Profitabilität ist in drei klare Finanzierungstranchen unterteilt:
+            </p>
+            <ol className="list-decimal pl-5 mb-6 text-sm text-black space-y-2">
+              <li>
+                <strong>Pre-Seed-Runde (Abgeschlossen):</strong> CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preSeedAfondPerdu)}</span> als <em>à-fond-perdu</em>-Anschubfinanzierung für die Marktforschung durch Medienunternehmer sowie ein Wandeldarlehen (Bridge) von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preSeedBridge)}</span> für das MVP-Prototyping.
+              </li>
+              <li>
+                <strong>Seed-Finanzierungsrunde (Aktuelle Phase):</strong> Einwerbung von mindestens CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(seedBetrag / 1000000).toFixed(1)}</span> Mio. bis CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(seedBetrag / 1000000 * 1.5).toFixed(1)}</span> Mio. zur Absicherung des Runways bis zum Schweizer Break-even. Abgabe von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">20</span> % der Anteile am Gründungs-Cap-Table.
+              </li>
+              <li>
+                <strong>Series A-Runde (In Vorbereitung):</strong> Geplante Aufnahme von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(seriesABetrag / 1000000).toFixed(1)}</span> Mio. im Geschäftsjahr <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seriesAYear}</span>, initiiert durch institutionelle B2B-SaaS- und Growth-Investoren, um die Internationalisierungsachse zu finanzieren.
+              </li>
+              <li>
+                <strong>Option Pool (ESOP):</strong> Reservierung von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">10</span> % der Anteile zur langfristigen Incentivierung von Schlüsselpositionen (CTO, Head of Sales, Lead-Analysten).
+              </li>
+            </ol>
+
+            <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
+              9.10 Break-Even-Analyse & Szenarien
+            </h3>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die Gewinnschwelle (Schweizer Break-Even) wird plangemäss im <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.breakEvenYear}.</span> Geschäftsjahr bei Erreichen von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{breakEvenPoint != null ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden)) : "—"}</span> Lizenzen überschritten. Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
+            </p>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Zur Absicherung wurden drei Szenarien modelliert:
+            </p>
+            <ul className="list-disc pl-5 text-sm text-black space-y-2">
+              <li>
+                <strong>Base Case (Erwarteter Verlauf):</strong> Erreichen des Schweizer Break-Even nach <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.baseCaseMonths}</span> Monaten. Erfolgreiches Series A-Closing im Monat <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{seriesAMonat}</span> und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.ebitMargeY3}</span> % im Jahr <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">3</span>.
+              </li>
+              <li>
+                <strong>Best Case (Skalierungs-Turbo):</strong> Extrem hohe Marktdurchdringung im ersten Jahr über direkte B2B2B-Verbandsrahmenverträge (Low CAC). Der Schweizer Markt trägt sich bereits nach <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.bestCaseMonths}</span> Monaten selbst. Die Series A-Runde kann zu einer deutlich höheren Unternehmensbewertung als ursprünglich veranschlagt durchgeführt werden.
+              </li>
+              <li>
+                <strong>Worst Case (Verzögerte Expansion):</strong> Der Schweizer Markteintritt benötigt aufgrund von Spardruck in der Verwaltung <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.worstCaseMonths}</span> Monate länger bis zur Profitabilität. Das Series A-Closing verschiebt sich nach hinten. Der verlängerte Runway wird durch das gestaffelte Abrufen einer im Gesellschaftervertrag verankerten Meilenstein-Tranche der Seed-Investoren in Höhe von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(spezialtopf)}</span> überbrückt.
+              </li>
+            </ul>
+          </article>
+        </div>
+      )}
+
+      {/* Footnotes */}
+      <article className="border-2 border-black bg-[#F5F5F5] p-4">
+        <h2 className="text-[16px] font-bold text-black">Fussnoten</h2>
+        <div className="mt-3 space-y-3 text-sm text-black">
+          <div>
+            <p className="font-semibold">Anmerkungen</p>
+            <p>
+              <span className="font-semibold">Liquiditäts-Floor:</span> Im Modell ist der Floor
+              <span className="font-semibold"> 100&apos;000 CHF + 3 Monatslöhne</span>. Sachkosten sind dabei nicht enthalten.
+            </p>
+            <p>
+              <span className="font-semibold">Preislogik:</span> Kunden zahlen im ersten Vertragsjahr den Jahr-1-Preis, im zweiten
+              Vertragsjahr den Preis ab Jahr 2 und ab dem dritten Vertragsjahr den Preis ab Jahr 3.
+            </p>
+          </div>
+          <div>
+            <p className="font-semibold">Vereinfachungen</p>
+            <p>
+              <span className="font-semibold">Null-FTE = niedrige Sachkosten:</span> Bei 80/20 sinken Sachkosten mit den FTEs mit.
+              Feste Startkosten (z. B. Recht, Setup, Lizenzen) sind nicht automatisch drin.
+            </p>
+            <p>
+              <span className="font-semibold">Kein Blended ARPU:</span> Das Modell nutzt feste Preise je Kohortenalter statt eines
+              gemischten Durchschnittspreises.
+            </p>
+            <p>
+              <span className="font-semibold">Unsterbliche Kohorten:</span> Kündigungen passieren nur zu Verlängerungszeitpunkten
+              (12/24/36 Monate), nicht laufend unter dem Jahr.
+            </p>
+            <p>
+              <span className="font-semibold">Cashflow vs. MRR:</span> Cash nutzt Annual Upfront (Jahreszahlung sofort), MRR zeigt
+              den monatlichen Umsatz. Beides kann daher bewusst auseinanderlaufen.
+            </p>
+          </div>
+        </div>
+      </article>
+    </main>
+  );
+}
+
+export default App;
