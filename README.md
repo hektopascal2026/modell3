@@ -20,8 +20,12 @@ Siehe [`docs/HAUPTTAB-PLAN.md`](docs/HAUPTTAB-PLAN.md) für die vollständige Di
 
 ```bash
 npm install
-npm run dev
+npm run dev      # → http://localhost:5173/modell3/
+npm run build
+npm run preview  # → http://localhost:4173/modell3/
 ```
+
+GitHub Pages: [hektopascal2026.github.io/modell3](https://hektopascal2026.github.io/modell3/)
 
 ## Status
 
