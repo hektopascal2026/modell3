@@ -1999,7 +1999,10 @@ ${buildBreakEvenAnalysePlain({
         <div className="space-y-4">
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[16px] font-bold text-black">Lizenzwachstum</h2>
-            <p className="text-sm font-normal text-black">Aktive Lizenzen nach Briefing, Monitor und Anker-Kunde über 48 Monate.</p>
+            <p className="text-sm font-normal text-black">
+              Aktive Lizenzen nach Briefing, Monitor und Anker-Kunde über 48 Monate. Gestrichelte Vertikallinien:
+              operativer Break-even ohne Monitor/Anker (grau) und mit Gesamtmodell (grün), sofern sie auseinanderfallen.
+            </p>
             <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={simulation} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
@@ -2014,11 +2017,40 @@ ${buildBreakEvenAnalysePlain({
                   {breakEvenMonatBaseline != null && (
                     <ReferenceLine
                       x={breakEvenMonatBaseline}
-                      stroke="#00aa00"
+                      stroke={
+                        breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                          ? "#888888"
+                          : "#00aa00"
+                      }
                       strokeDasharray="4 4"
-                      label={{ value: "Break-even", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
+                      label={{
+                        value:
+                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                            ? "BE ohne Monitor/Anker"
+                            : "Break-even",
+                        position: "insideTopLeft",
+                        fill:
+                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                            ? "#666666"
+                            : "#00aa00",
+                        fontSize: 11,
+                      }}
                     />
                   )}
+                  {breakEvenMonatTotal != null &&
+                    breakEvenMonatBaseline !== breakEvenMonatTotal && (
+                      <ReferenceLine
+                        x={breakEvenMonatTotal}
+                        stroke="#00aa00"
+                        strokeDasharray="4 4"
+                        label={{
+                          value: "BE gesamt",
+                          position: "insideTopRight",
+                          fill: "#00aa00",
+                          fontSize: 12,
+                        }}
+                      />
+                    )}
                   <Tooltip
                     formatter={(value) => numberFormatter.format(Math.round(value))}
                     labelFormatter={(label) => `Monat ${label}`}
