@@ -175,7 +175,7 @@
       "costY1": 44000,
       "costY2": 105600,
       "costY3": 105600,
-      "startMonth": 1,
+      "startMonth": 8,
       "monthsY4": 12.0
     },
     {
@@ -191,7 +191,7 @@
       "costY1": 11200,
       "costY2": 67200,
       "costY3": 67200,
-      "startMonth": 1,
+      "startMonth": 11,
       "monthsY4": 12.0
     },
     {
@@ -201,7 +201,7 @@
       "salaryMonth": 9000.0,
       "head": 1.0,
       "fte": 0.8,
-      "monthsY1": null,
+      "monthsY1": 0,
       "monthsY2": 12.0,
       "monthsY3": 12.0,
       "costY1": 0.0,
@@ -217,7 +217,7 @@
       "salaryMonth": 7000.0,
       "head": 1.0,
       "fte": 0.8,
-      "monthsY1": null,
+      "monthsY1": 0,
       "monthsY2": 12.0,
       "monthsY3": 12.0,
       "costY1": 0.0,
@@ -249,13 +249,13 @@
       "salaryMonth": 9000.0,
       "head": 1.0,
       "fte": 1.0,
-      "monthsY1": null,
+      "monthsY1": 0,
       "monthsY2": 9.0,
       "monthsY3": 12.0,
       "costY1": 0.0,
       "costY2": 81000,
       "costY3": 108000,
-      "startMonth": 13,
+      "startMonth": 16,
       "monthsY4": 12.0
     },
     {

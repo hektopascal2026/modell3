@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint .",
+    "build:subdir": "VITE_BASE_PATH=/modell3/ vite build",
+    "deploy": "DEPLOY_SUBPATH=modell3 ./scripts/deploy-seismo.sh",
+    "deploy:modell3": "DEPLOY_SUBPATH=modell3 ./scripts/deploy-seismo.sh",
     "preview": "vite preview"
   },
   "dependencies": {

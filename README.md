@@ -27,17 +27,16 @@ npm run preview  # → http://localhost:4173/modell3/
 
 ## Szenarien (geräteübergreifend)
 
-Szenarien werden in `public/scenarios/scenarios.json` im GitHub-Repo gespeichert.
+Szenarien werden auf dem Server unter `scenarios/scenarios.json` gespeichert (`api/scenarios.php`). Eingaben werden **nicht** mehr automatisch im Browser-Cache gehalten.
 
-- **Laden:** funktioniert auf jedem Gerät ohne Setup (Dropdown → Laden)
-- **Speichern:** benötigt einmalig `VITE_GITHUB_SCENARIO_TOKEN` in `.env.local` (siehe `.env.example`)
-  - GitHub PAT (classic) mit `repo`-Scope auf `hektopascal2026/modell3`
-  - Für Production-Build: Token als GitHub Actions Secret beim Deploy setzen
+- **Beim Start:** lädt «Standard» vom Server (falls vorhanden)
+- **Speichern / Laden:** explizit über die UI-Buttons
+- **Deploy:** nur `https://seismo.live/modell3/` — Modell 4: Repo [`hektopascal2026/modell4`](https://github.com/hektopascal2026/modell4)
 
 ```bash
 cp .env.example .env.local
-# Token eintragen, dann:
-npm run dev
+# VITE_SCENARIO_API_KEY = Key aus public/api/config.local.php auf dem Server
+npm run deploy:modell3
 ```
 
 ## Status

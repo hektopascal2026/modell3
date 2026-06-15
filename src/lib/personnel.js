@@ -7,6 +7,22 @@ export const getMonthsForYear = (role, year) => {
   return role.monthsY4 ?? role.monthsY3 ?? 0;
 };
 
+/** Startmonat aus Excel-Logik: Teiljahre am Ende des Geschäftsjahres. */
+export const deriveRoleStartMonth = (role) => {
+  const years = [
+    role.monthsY1 ?? 0,
+    role.monthsY2 ?? 0,
+    role.monthsY3 ?? 0,
+    role.monthsY4 ?? role.monthsY3 ?? 0,
+  ];
+  for (let y = 0; y < years.length; y += 1) {
+    const months = years[y];
+    if (months > 0 && months < 12) return y * 12 + (13 - months);
+    if (months === 12) return y * 12 + 1;
+  }
+  return 1;
+};
+
 /** Role active in absolute month m based on startMonth + per-year duration segments. */
 export const isRoleActive = (role, month) => {
   const start = role.startMonth ?? 1;

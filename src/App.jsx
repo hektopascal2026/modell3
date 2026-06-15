@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import planData from "./data/finanzierungsplan20260614.json";
-import { calcMindestliquiditaet, calcMonthlyPersonnel, calcYearlyPersonnel } from "./lib/personnel.js";
+import { calcMindestliquiditaet, calcMonthlyPersonnel, calcYearlyPersonnel, deriveRoleStartMonth } from "./lib/personnel.js";
 import {
   calcMonthlySachkosten,
   calcReserveMonthly,
@@ -26,6 +26,7 @@ import {
   saveScenarios,
   sortScenarioNames,
 } from "./lib/scenarioStore.js";
+import { readAppPreference, sessionAuthorKey, writeAppPreference } from "./lib/storage.js";
 
 const MONTHS = 48;
 const currencyFormatter = new Intl.NumberFormat("de-CH", {
@@ -119,6 +120,7 @@ const normalizeSachkosten = (items) =>
 const DEFAULT_ROLES = planData.roles.map((r) => ({
   ...r,
   monthsY4: r.monthsY4 ?? r.monthsY3 ?? 0,
+  startMonth: r.startMonth ?? deriveRoleStartMonth(r),
 }));
 
 const DEFAULT_SACHKOSTEN = normalizeSachkosten(planData.sachkosten);
@@ -151,47 +153,38 @@ const DEFAULTS = {
   spezialtopf: 0,
 };
 
-const getStored = (key, fallback) => {
-  try {
-    const val = localStorage.getItem(`hekto3_${key}`);
-    if (val === null) return fallback;
-    return JSON.parse(val);
-  } catch (e) {
-    return fallback;
-  }
-};
-
 function App() {
+  const scenariosHydrated = useRef(false);
   const [activeTab, setActiveTab] = useState("inputs"); // "inputs" | "calc" | "charts"
-  const [seedBetrag, setSeedBetrag] = useState(() => getStored("seedBetrag", DEFAULTS.seedBetrag));
-  const [seedMonat, setSeedMonat] = useState(() => getStored("seedMonat", DEFAULTS.seedMonat));
-  const [seriesABetrag, setSeriesABetrag] = useState(() => getStored("seriesABetrag", DEFAULTS.seriesABetrag));
-  const [seriesAMonat, setSeriesAMonat] = useState(() => getStored("seriesAMonat", DEFAULTS.seriesAMonat));
-  const [preSeedAfondPerdu, setPreSeedAfondPerdu] = useState(() => getStored("preSeedAfondPerdu", DEFAULTS.preSeedAfondPerdu));
-  const [preSeedBridge, setPreSeedBridge] = useState(() => getStored("preSeedBridge", DEFAULTS.preSeedBridge));
+  const [seedBetrag, setSeedBetrag] = useState(DEFAULTS.seedBetrag);
+  const [seedMonat, setSeedMonat] = useState(DEFAULTS.seedMonat);
+  const [seriesABetrag, setSeriesABetrag] = useState(DEFAULTS.seriesABetrag);
+  const [seriesAMonat, setSeriesAMonat] = useState(DEFAULTS.seriesAMonat);
+  const [preSeedAfondPerdu, setPreSeedAfondPerdu] = useState(DEFAULTS.preSeedAfondPerdu);
+  const [preSeedBridge, setPreSeedBridge] = useState(DEFAULTS.preSeedBridge);
   
   const startkapital = (seedMonat === 0 ? seedBetrag : 0) + (seriesAMonat === 0 ? seriesABetrag : 0);
 
-  const [neueKundenJ1, setNeueKundenJ1] = useState(() => getStored("neueKundenJ1", DEFAULTS.neueKundenJ1));
-  const [neueKundenJ2, setNeueKundenJ2] = useState(() => getStored("neueKundenJ2", DEFAULTS.neueKundenJ2));
-  const [neueKundenJ3, setNeueKundenJ3] = useState(() => getStored("neueKundenJ3", DEFAULTS.neueKundenJ3));
-  const [neueKundenJ4, setNeueKundenJ4] = useState(() => getStored("neueKundenJ4", DEFAULTS.neueKundenJ4));
-  const [preisJ1, setPreisJ1] = useState(() => getStored("preisJ1", DEFAULTS.preisJ1));
-  const [preisAbJ2, setPreisAbJ2] = useState(() => getStored("preisAbJ2", DEFAULTS.preisAbJ2));
-  const [preisAbJ3, setPreisAbJ3] = useState(() => getStored("preisAbJ3", DEFAULTS.preisAbJ3));
-  const [verlaengerungNachJ1, setVerlaengerungNachJ1] = useState(() => getStored("verlaengerungNachJ1", DEFAULTS.verlaengerungNachJ1));
-  const [verlaengerungNachJ2, setVerlaengerungNachJ2] = useState(() => getStored("verlaengerungNachJ2", DEFAULTS.verlaengerungNachJ2));
-  const [verlaengerungNachJ3, setVerlaengerungNachJ3] = useState(() => getStored("verlaengerungNachJ3", DEFAULTS.verlaengerungNachJ3));
-  const [sponsoringJahr1, setSponsoringJahr1] = useState(() => getStored("sponsoringJahr1", DEFAULTS.sponsoringJahr1));
-  const [sponsoringJahr2, setSponsoringJahr2] = useState(() => getStored("sponsoringJahr2", DEFAULTS.sponsoringJahr2));
-  const [sponsoringJahr3, setSponsoringJahr3] = useState(() => getStored("sponsoringJahr3", DEFAULTS.sponsoringJahr3));
-  const [sponsoringJahr4, setSponsoringJahr4] = useState(() => getStored("sponsoringJahr4", DEFAULTS.sponsoringJahr4));
+  const [neueKundenJ1, setNeueKundenJ1] = useState(DEFAULTS.neueKundenJ1);
+  const [neueKundenJ2, setNeueKundenJ2] = useState(DEFAULTS.neueKundenJ2);
+  const [neueKundenJ3, setNeueKundenJ3] = useState(DEFAULTS.neueKundenJ3);
+  const [neueKundenJ4, setNeueKundenJ4] = useState(DEFAULTS.neueKundenJ4);
+  const [preisJ1, setPreisJ1] = useState(DEFAULTS.preisJ1);
+  const [preisAbJ2, setPreisAbJ2] = useState(DEFAULTS.preisAbJ2);
+  const [preisAbJ3, setPreisAbJ3] = useState(DEFAULTS.preisAbJ3);
+  const [verlaengerungNachJ1, setVerlaengerungNachJ1] = useState(DEFAULTS.verlaengerungNachJ1);
+  const [verlaengerungNachJ2, setVerlaengerungNachJ2] = useState(DEFAULTS.verlaengerungNachJ2);
+  const [verlaengerungNachJ3, setVerlaengerungNachJ3] = useState(DEFAULTS.verlaengerungNachJ3);
+  const [sponsoringJahr1, setSponsoringJahr1] = useState(DEFAULTS.sponsoringJahr1);
+  const [sponsoringJahr2, setSponsoringJahr2] = useState(DEFAULTS.sponsoringJahr2);
+  const [sponsoringJahr3, setSponsoringJahr3] = useState(DEFAULTS.sponsoringJahr3);
+  const [sponsoringJahr4, setSponsoringJahr4] = useState(DEFAULTS.sponsoringJahr4);
 
-  const [roles, setRoles] = useState(() => getStored("roles", DEFAULTS.roles));
-  const [sachkostenItems, setSachkostenItems] = useState(() => getStored("sachkostenItems", DEFAULTS.sachkostenItems));
-  const [sozialabgabenProzent, setSozialabgabenProzent] = useState(() => getStored("sozialabgabenProzent", DEFAULTS.sozialabgabenProzent));
-  const [gewinnsteuerRate, setGewinnsteuerRate] = useState(() => getStored("gewinnsteuerRate", DEFAULTS.gewinnsteuerRate));
-  const [spezialtopf, setSpezialtopf] = useState(() => getStored("spezialtopf", DEFAULTS.spezialtopf));
+  const [roles, setRoles] = useState(DEFAULTS.roles);
+  const [sachkostenItems, setSachkostenItems] = useState(DEFAULTS.sachkostenItems);
+  const [sozialabgabenProzent, setSozialabgabenProzent] = useState(DEFAULTS.sozialabgabenProzent);
+  const [gewinnsteuerRate, setGewinnsteuerRate] = useState(DEFAULTS.gewinnsteuerRate);
+  const [spezialtopf, setSpezialtopf] = useState(DEFAULTS.spezialtopf);
 
   const [scenarioMap, setScenarioMap] = useState({});
   const [selectedScenario, setSelectedScenario] = useState("");
@@ -210,6 +203,9 @@ function App() {
         if (role.id !== id) return role;
         const next = { ...role, [field]: value };
         if (field === "monthsY3") next.monthsY4 = value;
+        if (field === "monthsY1" || field === "monthsY2" || field === "monthsY3" || field === "monthsY4") {
+          next.startMonth = deriveRoleStartMonth(next);
+        }
         return next;
       })
     );
@@ -283,14 +279,24 @@ function App() {
     if (data.spezialtopf !== undefined) setSpezialtopf(data.spezialtopf);
   };
 
-  const refreshScenarios = async () => {
+  const refreshScenarios = async ({ hydrate = false } = {}) => {
     setScenariosLoading(true);
     try {
       const { scenarios, meta, source } = await fetchScenarios();
       setScenarioMap(scenarios);
       setScenarioMeta(meta);
       setScenarioSource(source);
-      if (selectedScenario && !scenarios[selectedScenario]) {
+
+      if (hydrate && !scenariosHydrated.current) {
+        scenariosHydrated.current = true;
+        const savedName = readAppPreference("selectedScenario", "");
+        const nameToLoad =
+          (savedName && scenarios[savedName] && savedName) || (scenarios.Standard ? "Standard" : null);
+        if (nameToLoad) {
+          applyScenarioSnapshot(scenarios[nameToLoad]);
+          setSelectedScenario(nameToLoad);
+        }
+      } else if (selectedScenario && !scenarios[selectedScenario]) {
         setSelectedScenario("");
       }
     } finally {
@@ -299,15 +305,15 @@ function App() {
   };
 
   useEffect(() => {
-    refreshScenarios();
+    refreshScenarios({ hydrate: true });
   }, []);
 
   const persistScenario = async (name, snapshot) => {
     const nextMap = { ...scenarioMap, [name]: snapshot };
-    let authorName = sessionStorage.getItem("hekto3_author");
+    let authorName = sessionStorage.getItem(sessionAuthorKey());
     if (!authorName) {
       authorName = window.prompt("Dein Name (einmalig, für Protokoll):", "")?.trim() || "unbekannt";
-      sessionStorage.setItem("hekto3_author", authorName);
+      sessionStorage.setItem(sessionAuthorKey(), authorName);
     }
     setScenariosSaving(true);
     try {
@@ -316,6 +322,7 @@ function App() {
       setScenarioMeta(meta);
       setScenarioSource("remote");
       setSelectedScenario(name);
+      writeAppPreference("selectedScenario", name);
       return true;
     } finally {
       setScenariosSaving(false);
@@ -362,6 +369,7 @@ function App() {
       return;
     }
     applyScenarioSnapshot(data);
+    writeAppPreference("selectedScenario", selectedScenario);
   };
 
   const handleMigrateLegacyScenarios = async () => {
@@ -388,23 +396,6 @@ function App() {
       setScenariosSaving(false);
     }
   };
-
-  useEffect(() => {
-    const data = {
-      seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
-      preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
-      sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-      roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
-    };
-    Object.entries(data).forEach(([key, val]) => {
-      localStorage.setItem(`hekto3_${key}`, JSON.stringify(val));
-    });
-  }, [
-    seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
-    preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
-    sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
-    roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
-  ]);
 
   const handleReset = () => {
     setSeedBetrag(DEFAULTS.seedBetrag);

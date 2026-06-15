@@ -1,0 +1,33 @@
+# Modell 3 — Apache (Shared Hosting, Unterordner /modell3/)
+DirectoryIndex index.php index.html
+Options -MultiViews +FollowSymLinks
+
+<IfModule mod_authz_core.c>
+  Require all granted
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Allow from all
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /modell3/
+
+  # API + statische Szenario-Datei nicht an SPA umleiten
+  RewriteRule ^api/ - [L]
+  RewriteRule ^scenarios/ - [L]
+  RewriteRule ^assets/ - [L]
+
+  # Vorhandene Dateien direkt ausliefern
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # SPA-Fallback (falls später Unterpfade genutzt werden)
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/json .json
+</IfModule>
