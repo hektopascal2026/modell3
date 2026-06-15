@@ -1,7 +1,7 @@
 import { appStorageKey } from "./storage.js";
 
 const GITHUB_OWNER = "hektopascal2026";
-const GITHUB_REPO = "modell3";
+const GITHUB_REPO = "modell4";
 const SCENARIOS_PATH = "public/scenarios/scenarios.json";
 const GITHUB_BRANCH = "main";
 const localCacheKey = () => appStorageKey("scenarios_cache");

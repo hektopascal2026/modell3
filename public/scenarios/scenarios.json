@@ -5,7 +5,7 @@
   },
   "scenarios": {
     "Standard": {
-      "seedBetrag": 1000000,
+      "seedBetrag": 3000000,
       "seedMonat": 0,
       "seriesABetrag": 0,
       "seriesAMonat": 12,

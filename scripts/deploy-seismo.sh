@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${DEPLOY_HOST:-root@seismo.live}"
-SUBPATH="${DEPLOY_SUBPATH:-modell3}"
+SUBPATH="${DEPLOY_SUBPATH:-modell4}"
 BASE_PATH="/${SUBPATH}/"
 TARGET="${DEPLOY_TARGET:-/var/www/seismo/${SUBPATH}}"
 

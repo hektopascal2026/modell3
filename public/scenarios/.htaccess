@@ -1,0 +1,4 @@
+# JSON lesbar, Schreiben nur via PHP
+<IfModule mod_authz_core.c>
+  Require all granted
+</IfModule>

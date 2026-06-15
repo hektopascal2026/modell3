@@ -27,6 +27,7 @@ import {
   sortScenarioNames,
 } from "./lib/scenarioStore.js";
 import { readAppPreference, sessionAuthorKey, writeAppPreference } from "./lib/storage.js";
+import { modelTitle } from "./lib/modelVersion.js";
 
 const MONTHS = 48;
 const currencyFormatter = new Intl.NumberFormat("de-CH", {
@@ -128,12 +129,12 @@ Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (AR
 
 Seed-Phase (Jahr 1 bis ${d.seriesAYear}):
 - Premium-Briefings: Erreichen von ${numberFormatter.format(Math.round(d.seedBriefingActive))} aktiven Lizenzen über ca. ${d.seedBriefingAccounts} B2B-Accounts zu einem rabattierten Einstiegspreis von CHF ${numberFormatter.format(d.seedBriefingPriceAnnual)} pro Lizenz/Jahr.
-- Monitor: Erreichen von ${numberFormatter.format(Math.round(d.seedMonitorActive))} aktiven Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceAnnual)} pro Lizenz/Jahr.
+- Monitor: Erreichen von ${numberFormatter.format(Math.round(d.seedMonitorActive))} aktiven Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceMonthly)} pro Lizenz/Monat (fester Preis).
 - ARR-Ziel: CHF ${formatArrMio(d.seedArr)} Mio., zu ${d.seedArrBriefingPct} Prozent aus Premium-Briefings und zu ${d.seedArrMonitorPct} Prozent aus Monitor.
 
 Series A-Phase (Jahr ${d.seriesAStartYear} bis 3):
 - Premium-Briefings: Schrittweise Harmonisierung auf den regulären Zielpreis von CHF ${numberFormatter.format(d.targetBriefingPriceAnnual)} pro Lizenz/Jahr. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) steigt das Absatzvolumen auf ${numberFormatter.format(d.briefingSoldY3)} Lizenzen. Ende Jahr 2 sind ${numberFormatter.format(Math.round(d.briefingActiveY2))} Lizenzen aktiv. Ende Jahr 3 sind ${numberFormatter.format(Math.round(d.briefingActiveY3))} Lizenzen aktiv.
-- Monitor: Das Absatzvolumen steigt auf ${numberFormatter.format(d.monitorSoldY3)} Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceAnnual)} pro Lizenz/Jahr. Ende Jahr 2 sind ${numberFormatter.format(Math.round(d.monitorActiveY2))} Lizenzen aktiv. Ende Jahr 3 sind ${numberFormatter.format(Math.round(d.monitorActiveY3))} Lizenzen aktiv.
+- Monitor: Das Absatzvolumen steigt auf ${numberFormatter.format(d.monitorSoldY3)} Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceMonthly)} pro Lizenz/Monat. Ende Jahr 2 sind ${numberFormatter.format(Math.round(d.monitorActiveY2))} Lizenzen aktiv. Ende Jahr 3 sind ${numberFormatter.format(Math.round(d.monitorActiveY3))} Lizenzen aktiv.
 - ARR-Ziel: CHF ${formatArrMio(d.seriesAArr)} Mio., zu ${d.seriesAArrBriefingPct} Prozent aus Premium-Briefings und zu ${d.seriesAArrMonitorPct} Prozent aus Monitor.
 
 Zusatz-Umsätze:
@@ -235,7 +236,7 @@ const DEFAULT_ROLES = planData.roles.map((r) => ({
 const DEFAULT_SACHKOSTEN = normalizeSachkosten(planData.sachkosten);
 
 const DEFAULTS = {
-  seedBetrag: 1000000,
+  seedBetrag: 3_000_000,
   seriesABetrag: 0,
   seriesAMonat: 12,
   preSeedAfondPerdu: 100000,
@@ -596,7 +597,6 @@ function App() {
         year === 1 ? neueKundenJ1 : year === 2 ? neueKundenJ2 : year === 3 ? neueKundenJ3 : neueKundenJ4;
       const sponsoringProMonat = sponsoringByYear(year);
       let briefingCashInflow = 0;
-      let monitorCashInflow = 0;
 
       for (let i = 0; i < briefingCohorts.length; i += 1) {
         briefingCohorts[i].age += 1;
@@ -625,12 +625,10 @@ function App() {
         monitorCohorts[i].age += 1;
         if (monitorCohorts[i].age === 12 || monitorCohorts[i].age === 24 || monitorCohorts[i].age === 36) {
           monitorCohorts[i].size *= renew1;
-          monitorCashInflow += monitorCohorts[i].size * monitorPreisProLizenz * 12;
         }
       }
 
       if (neueMonitor > 0) {
-        monitorCashInflow += neueMonitor * monitorPreisProLizenz * 12;
         monitorCohorts.push({ size: neueMonitor, age: 0 });
         verkaufteAbosMonitor += neueMonitor;
       }
@@ -657,7 +655,7 @@ function App() {
       const gesamteinnahmen = baselineGesamteinnahmen + umsatzMonitor + umsatzAnker;
 
       const baselineCashwirksameEinnahmen = briefingCashInflow + sponsoringProMonat;
-      const cashwirksameEinnahmen = baselineCashwirksameEinnahmen + monitorCashInflow + umsatzAnker;
+      const cashwirksameEinnahmen = baselineCashwirksameEinnahmen + umsatzMonitor + umsatzAnker;
 
       const personnel = calcMonthlyPersonnel(roles, month, sozialabgabenProzent);
       const { total: sachkostenBase, breakdown } = calcMonthlySachkosten(sachkostenItems, month, {
@@ -1220,6 +1218,7 @@ function App() {
       seriesAArrMonitorPct: seriesAArrSplit.monitorPct,
       seedBriefingPriceAnnual: preisJ1 * 12,
       targetBriefingPriceAnnual: preisAbJ3 * 12,
+      monitorPriceMonthly: monitorPreisProLizenz,
       monitorPriceAnnual: monitorPreisProLizenz * 12,
       sponsoringY1Annual: sponsoringJahr1 * 12,
       sponsoringY2Annual: sponsoringJahr2 * 12,
@@ -1334,7 +1333,7 @@ ${buildBreakEvenAnalysePlain({
       {/* Header */}
       <header className="flex flex-col gap-3 border-2 border-black bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-[20px] font-bold text-black">Finanzmodell Hektopascal — Modell 3</h1>
+          <h1 className="text-[20px] font-bold text-black">{modelTitle()}</h1>
           <p className="text-xs font-normal text-black mt-1">Rollenbasierte Planung · 48 Monate (CHF) · Stand 13.06.2026</p>
           {scenarioMeta?.updatedAt && (
             <p className="text-[10px] text-gray-500 mt-1 font-mono">
@@ -1476,43 +1475,6 @@ ${buildBreakEvenAnalysePlain({
           helpText="Benötigtes Kapital, um eine Unterschreitung des Liquiditätspuffers zu verhindern."
         />
       </div>
-
-      <aside className="border-2 border-black bg-[#FAFAFA] px-4 py-3 text-[11px] leading-relaxed text-gray-800">
-        <p className="font-bold text-black text-xs mb-2">Modellannahmen</p>
-        <ol className="list-decimal space-y-1.5 pl-4">
-          <li>
-            <strong>Planstart (Monat 0):</strong> Betriebsaufnahme der AG. Das Modell simuliert ab diesem Zeitpunkt über 48 Monate.
-          </li>
-          <li>
-            <strong>Pre-Seed & Bridge (vor Monat 0):</strong>{" "}
-            {currencyFormatter.format(preSeedAfondPerdu)} à-fond-perdu und{" "}
-            {currencyFormatter.format(preSeedBridge)} Bridge-Wandeldarlehen — reine Dokumentation der abgeschlossenen
-            Vor-Gründungsphase, <strong>ohne Einfluss</strong> auf Cash, KPIs und Simulation.
-          </li>
-          <li>
-            <strong>Finanzierungszuflüsse im Modell:</strong> Seed bei Monat 0 (Startkapital), Series A im eingestellten
-            Monat ≥ 1.
-          </li>
-          <li>
-            <strong>KPI «Ohne / Mit Monitor/Anker»:</strong> «Ohne» = Premium-Briefings + Sponsoring (Baseline). «Mit» =
-            Gesamtmodell inkl. optionaler Monitor- und Anker-Kunde-Erlöse (Standardwerte 0 = identisch).
-          </li>
-          <li>
-            <strong>Operativer Break-even:</strong> erster Monat mit Einnahmen ≥ Personal + Sachkosten + Spezialtopf
-            (ohne Gewinnsteuer).
-          </li>
-          <li>
-            <strong>Erforderliches Kapital:</strong> Seed + Series A abzüglich tiefstem Liquiditätspuffer über den
-            Planungshorizont (100&apos;000 CHF Reserve + 3 Monate Personalkosten inkl. Sozialabgaben).
-          </li>
-          <li>
-            <strong>Speichern & Laden:</strong> Eingaben werden nicht mehr im Browser zwischengespeichert (kein
-            Überschreiben durch andere Pfade wie /modell3/). Beim Start wird «Standard» vom Server geladen, falls
-            vorhanden. Änderungen mit <strong>Speichern</strong> ins Szenario schreiben; andere Szenarien mit{" "}
-            <strong>Laden</strong> holen.
-          </li>
-        </ol>
-      </aside>
 
       {/* Tab Switcher */}
       <div className="flex border-2 border-black bg-white">
@@ -1691,11 +1653,11 @@ ${buildBreakEvenAnalysePlain({
                   step={1}
                 />
                 <LabeledNumberInput
-                  label="Preis pro Lizenz (CHF)"
+                  label="Preis pro Lizenz pro Monat (CHF)"
                   value={monitorPreisProLizenz}
                   onChange={setMonitorPreisProLizenz}
                   step={5}
-                  helpText="Jahrespreis upfront · Churn = Verlängerung nach Jahr 1 (alle 12 Mon.)"
+                  helpText="Monatliche Abrechnung · fester Preis · gleiche Neulizenzen/Monat · Churn = Verlängerung nach Jahr 1 (alle 12 Mon.)"
                 />
               </div>
               <div className="border-2 border-black bg-[#F5F5F5] p-3 space-y-3">
@@ -1981,97 +1943,13 @@ ${buildBreakEvenAnalysePlain({
       {activeTab === "charts" && (
         <div className="space-y-4">
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[16px] font-bold text-black">Lizenzwachstum</h2>
+            <h2 className="text-[16px] font-bold text-black">
+              Finanzen und Liquidität — Baseline (ohne Anker und Monitor)
+            </h2>
             <p className="text-sm font-normal text-black">
-              Aktive Lizenzen nach Briefing, Monitor und Anker-Kunde über 48 Monate. Gestrichelte Vertikallinien:
-              operativer Break-even ohne Monitor/Anker (grau) und mit Gesamtmodell (grün), sofern sie auseinanderfallen.
-            </p>
-            <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={simulation} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fontSize: 14, fill: "#000000" }}
-                    label={{ value: "Monat", position: "insideBottom", offset: -4 }}
-                    minTickGap={18}
-                  />
-                  <YAxis tick={{ fontSize: 14, fill: "#000000" }} width={56} />
-                  {breakEvenMonatBaseline != null && (
-                    <ReferenceLine
-                      x={breakEvenMonatBaseline}
-                      stroke={
-                        breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
-                          ? "#888888"
-                          : "#00aa00"
-                      }
-                      strokeDasharray="4 4"
-                      label={{
-                        value:
-                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
-                            ? "BE ohne Monitor/Anker"
-                            : "Break-even",
-                        position: "insideTopLeft",
-                        fill:
-                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
-                            ? "#666666"
-                            : "#00aa00",
-                        fontSize: 11,
-                      }}
-                    />
-                  )}
-                  {breakEvenMonatTotal != null &&
-                    breakEvenMonatBaseline !== breakEvenMonatTotal && (
-                      <ReferenceLine
-                        x={breakEvenMonatTotal}
-                        stroke="#00aa00"
-                        strokeDasharray="4 4"
-                        label={{
-                          value: "BE gesamt",
-                          position: "insideTopRight",
-                          fill: "#00aa00",
-                          fontSize: 12,
-                        }}
-                      />
-                    )}
-                  <Tooltip
-                    formatter={(value) => numberFormatter.format(Math.round(value))}
-                    labelFormatter={(label) => `Monat ${label}`}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
-                  <Line
-                    type="monotone"
-                    dataKey="aktiveBriefing"
-                    name="Briefing"
-                    stroke="#FF6B6B"
-                    strokeWidth={2.5}
-                    dot={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="aktiveMonitor"
-                    name="Monitor"
-                    stroke="#4A90D9"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="aktiveAnker"
-                    name="Anker-Kunde"
-                    stroke="#9B59B6"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </article>
-
-          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[16px] font-bold text-black">Finanzen & Liquidität</h2>
-            <p className="text-sm font-normal text-black">
-              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Personalkosten der nächsten 3 Monate inkl. Sozialabgaben). Baseline ohne Monitor/Anker-Kunde. Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
+              Premium-Briefings und Sponsoring. Einnahmen, operative Ausgaben, Cashbestand und Mindestliquidität
+              (100&apos;000 CHF + Personalkosten der nächsten 3 Monate inkl. Sozialabgaben). Die grüne Linie markiert
+              den operativen Break-even.
             </p>
             <div className="mt-4 h-[34rem] 2xl:h-[38rem]">
               <ResponsiveContainer width="100%" height="100%">
@@ -2129,6 +2007,90 @@ ${buildBreakEvenAnalysePlain({
                     yAxisId="right"
                     type="monotone"
                     dataKey="baselineCashbestand"
+                    name="Cashbestand"
+                    stroke="#000000"
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="mindestliquiditaet"
+                    name="Mindestliquidität"
+                    stroke="#ff9900"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">
+              Finanzen und Liquidität — komplett (mit Anker und Monitor)
+            </h2>
+            <p className="text-sm font-normal text-black">
+              Gesamtmodell inkl. Monitor und Anker-Kunde. Gleiche operative Ausgaben wie Baseline; höhere Einnahmen und
+              Cashbestand durch Zusatzprodukte. Mindestliquidität identisch (nur personalabhängig).
+            </p>
+            <div className="mt-4 h-[34rem] 2xl:h-[38rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={simulation} margin={{ top: 12, right: 26, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis dataKey="month" tick={{ fontSize: 14, fill: "#000000" }} minTickGap={18} />
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={84}
+                    label={{ value: "Einnahmen/Ausgaben (CHF)", angle: -90, position: "insideLeft", fill: "#000000", fontSize: 12 }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={92}
+                    label={{ value: "Cash/Floor (CHF)", angle: 90, position: "insideRight", fill: "#000000", fontSize: 12 }}
+                  />
+                  {breakEvenMonatTotal != null && (
+                    <ReferenceLine
+                      x={breakEvenMonatTotal}
+                      yAxisId="left"
+                      stroke="#00aa00"
+                      strokeDasharray="4 4"
+                      label={{ value: "Break-even", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
+                    />
+                  )}
+                  <Tooltip
+                    formatter={(value, name) => [currencyFormatter.format(value), name]}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="gesamteinnahmen"
+                    name="Einnahmen"
+                    stroke="#00aa00"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="baselineOperativeAusgaben"
+                    name="Ausgaben (operativ)"
+                    stroke="#FF2C2C"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="cashbestand"
                     name="Cashbestand"
                     stroke="#000000"
                     strokeWidth={2.5}
@@ -2212,9 +2174,12 @@ ${buildBreakEvenAnalysePlain({
           </article>
 
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[16px] font-bold text-black">Kapitalbedarf bei Floor-Touch</h2>
+            <h2 className="text-[16px] font-bold text-black">
+              Kapitalbedarf bei Floor-Touch (mit Anker und Monitor)
+            </h2>
             <p className="text-sm font-normal text-black">
-              Zeigt, welches Startkapital nötig wäre, um die Mindestliquidität genau in einem bestimmten Monat zu berühren.
+              Gesamtmodell: welches Startkapital nötig wäre, um die Mindestliquidität genau in einem bestimmten Monat zu
+              berühren.
             </p>
             <div className="mt-4 h-[30rem] 2xl:h-[34rem]">
               <ResponsiveContainer width="100%" height="100%">
@@ -2247,6 +2212,94 @@ ${buildBreakEvenAnalysePlain({
                     stroke="#000000"
                     strokeDasharray="6 4"
                     strokeWidth={2.2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">Lizenzwachstum</h2>
+            <p className="text-sm font-normal text-black">
+              Aktive Lizenzen nach Briefing, Monitor und Anker-Kunde über 48 Monate. Gestrichelte Vertikallinien:
+              operativer Break-even ohne Monitor/Anker (grau) und mit Gesamtmodell (grün), sofern sie auseinanderfallen.
+            </p>
+            <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={simulation} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    label={{ value: "Monat", position: "insideBottom", offset: -4 }}
+                    minTickGap={18}
+                  />
+                  <YAxis tick={{ fontSize: 14, fill: "#000000" }} width={56} />
+                  {breakEvenMonatBaseline != null && (
+                    <ReferenceLine
+                      x={breakEvenMonatBaseline}
+                      stroke={
+                        breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                          ? "#888888"
+                          : "#00aa00"
+                      }
+                      strokeDasharray="4 4"
+                      label={{
+                        value:
+                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                            ? "BE ohne Monitor/Anker"
+                            : "Break-even",
+                        position: "insideTopLeft",
+                        fill:
+                          breakEvenMonatTotal != null && breakEvenMonatTotal !== breakEvenMonatBaseline
+                            ? "#666666"
+                            : "#00aa00",
+                        fontSize: 11,
+                      }}
+                    />
+                  )}
+                  {breakEvenMonatTotal != null &&
+                    breakEvenMonatBaseline !== breakEvenMonatTotal && (
+                      <ReferenceLine
+                        x={breakEvenMonatTotal}
+                        stroke="#00aa00"
+                        strokeDasharray="4 4"
+                        label={{
+                          value: "BE gesamt",
+                          position: "insideTopRight",
+                          fill: "#00aa00",
+                          fontSize: 12,
+                        }}
+                      />
+                    )}
+                  <Tooltip
+                    formatter={(value) => numberFormatter.format(Math.round(value))}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveBriefing"
+                    name="Briefing"
+                    stroke="#FF6B6B"
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveMonitor"
+                    name="Monitor"
+                    stroke="#4A90D9"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveAnker"
+                    name="Anker-Kunde"
+                    stroke="#9B59B6"
+                    strokeWidth={2}
                     dot={false}
                   />
                 </LineChart>
@@ -2449,7 +2502,8 @@ ${buildBreakEvenAnalysePlain({
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Monitor</h2>
             <p className="text-xs text-gray-600 mb-4">
-              Jahrespreis upfront · fester Preis · Churn = Verlängerung nach Jahr 1 ({clampPercent(verlaengerungNachJ1).toFixed(1)} %) alle 12 Monate
+              Monatliche Abrechnung · fester Preis · konstante Neulizenzen/Monat · Churn = Verlängerung nach Jahr 1 (
+              {clampPercent(verlaengerungNachJ1).toFixed(1)} %) alle 12 Monate · Cash = GuV
             </p>
             {!monitorCalcDetails.active ? (
               <div className="bg-[#F5F5F5] border-2 border-black p-4 text-sm text-gray-600">
@@ -2460,7 +2514,7 @@ ${buildBreakEvenAnalysePlain({
                 <p className="text-sm text-black">
                   Ab Monat <strong>{monitorCalcDetails.startMonat}</strong> werden{" "}
                   <strong>{monitorCalcDetails.neueProMonat}</strong> neue Lizenzen/Monat à{" "}
-                  <strong>{monitorCalcDetails.preis} CHF</strong> verkauft (Upfront = Preis × 12).
+                  <strong>{monitorCalcDetails.preis} CHF</strong>/Monat verkauft (konstant über alle Jahre).
                 </p>
                 {monitorCalcDetails.years.map((y) => (
                   <div
@@ -2881,7 +2935,7 @@ ${buildBreakEvenAnalysePlain({
                   <li>
                     <strong>Monitor:</strong> Erreichen von{" "}
                     <Highlight>{numberFormatter.format(Math.round(dummyData.seedMonitorActive))}</Highlight> aktiven Lizenzen zum
-                    Preis von CHF <Highlight>{numberFormatter.format(dummyData.monitorPriceAnnual)}</Highlight> pro Lizenz/Jahr.
+                    Preis von CHF <Highlight>{numberFormatter.format(dummyData.monitorPriceMonthly)}</Highlight> pro Lizenz/Monat.
                   </li>
                   <li>
                     <strong>ARR-Ziel:</strong> CHF <Highlight>{formatArrMio(dummyData.seedArr)}</Highlight> Mio., zu{" "}
@@ -2906,7 +2960,7 @@ ${buildBreakEvenAnalysePlain({
                   <li>
                     <strong>Monitor:</strong> Das Absatzvolumen steigt auf{" "}
                     <Highlight>{numberFormatter.format(dummyData.monitorSoldY3)}</Highlight> Lizenzen zum Preis von CHF{" "}
-                    <Highlight>{numberFormatter.format(dummyData.monitorPriceAnnual)}</Highlight> pro Lizenz/Jahr. Ende Jahr 2 sind{" "}
+                    <Highlight>{numberFormatter.format(dummyData.monitorPriceMonthly)}</Highlight> pro Lizenz/Monat. Ende Jahr 2 sind{" "}
                     <Highlight>{numberFormatter.format(Math.round(dummyData.monitorActiveY2))}</Highlight> Lizenzen aktiv. Ende Jahr
                     3 sind <Highlight>{numberFormatter.format(Math.round(dummyData.monitorActiveY3))}</Highlight> Lizenzen aktiv.
                   </li>
@@ -3146,6 +3200,43 @@ ${buildBreakEvenAnalysePlain({
         <h2 className="text-[16px] font-bold text-black">Fussnoten</h2>
         <div className="mt-3 space-y-3 text-sm text-black">
           <div>
+            <p className="font-semibold">Modellannahmen</p>
+            <ol className="list-decimal space-y-1.5 pl-5 mt-2">
+              <li>
+                <strong>Planstart (Monat 0):</strong> Betriebsaufnahme der AG. Das Modell simuliert ab diesem Zeitpunkt über
+                48 Monate.
+              </li>
+              <li>
+                <strong>Pre-Seed & Bridge (vor Monat 0):</strong>{" "}
+                {currencyFormatter.format(preSeedAfondPerdu)} à-fond-perdu und{" "}
+                {currencyFormatter.format(preSeedBridge)} Bridge-Wandeldarlehen — reine Dokumentation der abgeschlossenen
+                Vor-Gründungsphase, <strong>ohne Einfluss</strong> auf Cash, KPIs und Simulation.
+              </li>
+              <li>
+                <strong>Finanzierungszuflüsse im Modell:</strong> Seed bei Monat 0 (Startkapital), Series A im eingestellten
+                Monat ≥ 1.
+              </li>
+              <li>
+                <strong>KPI «Ohne / Mit Monitor/Anker»:</strong> «Ohne» = Premium-Briefings + Sponsoring (Baseline). «Mit» =
+                Gesamtmodell inkl. optionaler Monitor- und Anker-Kunde-Erlöse (Standardwerte 0 = identisch).
+              </li>
+              <li>
+                <strong>Operativer Break-even:</strong> erster Monat mit Einnahmen ≥ Personal + Sachkosten + Spezialtopf
+                (ohne Gewinnsteuer).
+              </li>
+              <li>
+                <strong>Erforderliches Kapital:</strong> Seed + Series A abzüglich tiefstem Liquiditätspuffer über den
+                Planungshorizont (100&apos;000 CHF Reserve + 3 Monate Personalkosten inkl. Sozialabgaben).
+              </li>
+              <li>
+                <strong>Speichern & Laden:</strong> Eingaben werden nicht mehr im Browser zwischengespeichert (kein
+                Überschreiben durch andere Pfade wie /modell3/). Beim Start wird «Standard» vom Server geladen, falls
+                vorhanden. Änderungen mit <strong>Speichern</strong> ins Szenario schreiben; andere Szenarien mit{" "}
+                <strong>Laden</strong> holen.
+              </li>
+            </ol>
+          </div>
+          <div>
             <p className="font-semibold">Anmerkungen</p>
             <p>
               <span className="font-semibold">Liquiditäts-Floor:</span> Im Modell ist der Floor
@@ -3172,8 +3263,8 @@ ${buildBreakEvenAnalysePlain({
               (12/24/36 Monate), nicht laufend unter dem Jahr.
             </p>
             <p>
-              <span className="font-semibold">Cashflow vs. MRR:</span> Cash nutzt Annual Upfront (Jahreszahlung sofort), MRR zeigt
-              den monatlichen Umsatz. Beides kann daher bewusst auseinanderlaufen.
+              <span className="font-semibold">Cashflow vs. MRR:</span> Premium-Briefings: Cash nutzt Annual Upfront (Jahreszahlung
+              sofort), MRR zeigt den monatlichen Umsatz. Monitor und Anker-Kunde: monatliche Abrechnung, Cash = MRR.
             </p>
           </div>
         </div>
