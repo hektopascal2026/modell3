@@ -44,6 +44,9 @@ const RESERVE_CHF = 100_000;
 
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
 const clampNumber = (value) => (Number.isNaN(value) ? 0 : value);
+/** Seed-Zufluss ist immer bei Planstart (Monat 0). */
+const SEED_MONAT = 0;
+const clampSeriesAMonat = (value) => Math.min(MONTHS, Math.max(1, clampNumber(value)));
 
 function LabeledNumberInput({ label, value, onChange, step = 1, min = 0, max, helpText }) {
   const [draft, setDraft] = useState(String(value));
@@ -100,12 +103,118 @@ function LabeledSliderInput({ label, value, onChange, min = 0, max = 1000, step 
   );
 }
 
+const formatArrMio = (arr) => (arr / 1_000_000).toFixed(2);
+
+const calcArrSplit = (briefingMrr, monitorMrr) => {
+  const totalMrr = briefingMrr + monitorMrr;
+  if (totalMrr <= 0) {
+    return { briefingPct: 0, monitorPct: 0, totalArr: 0 };
+  }
+  return {
+    briefingPct: Math.round((briefingMrr / totalMrr) * 100),
+    monitorPct: Math.round((monitorMrr / totalMrr) * 100),
+    totalArr: totalMrr * 12,
+  };
+};
+
+const buildUmsatzAbsatzplanungPlain = ({
+  d,
+  numberFormatter,
+  currencyFormatter,
+}) => `9.3 Umsatz- & Absatzplanung
+
+Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (ARR) mit jährlicher Vorauszahlung.
+
+Seed-Phase (Jahr 1 bis ${d.seriesAYear}):
+- Premium-Briefings: Erreichen von ${numberFormatter.format(Math.round(d.seedBriefingActive))} aktiven Lizenzen über ca. ${d.seedBriefingAccounts} B2B-Accounts zu einem rabattierten Einstiegspreis von CHF ${numberFormatter.format(d.seedBriefingPriceAnnual)} pro Lizenz/Jahr.
+- Monitor: Erreichen von ${numberFormatter.format(Math.round(d.seedMonitorActive))} aktiven Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceAnnual)} pro Lizenz/Jahr.
+- ARR-Ziel: CHF ${formatArrMio(d.seedArr)} Mio., zu ${d.seedArrBriefingPct} Prozent aus Premium-Briefings und zu ${d.seedArrMonitorPct} Prozent aus Monitor.
+
+Series A-Phase (Jahr ${d.seriesAStartYear} bis 3):
+- Premium-Briefings: Schrittweise Harmonisierung auf den regulären Zielpreis von CHF ${numberFormatter.format(d.targetBriefingPriceAnnual)} pro Lizenz/Jahr. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) steigt das Absatzvolumen auf ${numberFormatter.format(d.briefingSoldY3)} Lizenzen. Ende Jahr 2 sind ${numberFormatter.format(Math.round(d.briefingActiveY2))} Lizenzen aktiv. Ende Jahr 3 sind ${numberFormatter.format(Math.round(d.briefingActiveY3))} Lizenzen aktiv.
+- Monitor: Das Absatzvolumen steigt auf ${numberFormatter.format(d.monitorSoldY3)} Lizenzen zum Preis von CHF ${numberFormatter.format(d.monitorPriceAnnual)} pro Lizenz/Jahr. Ende Jahr 2 sind ${numberFormatter.format(Math.round(d.monitorActiveY2))} Lizenzen aktiv. Ende Jahr 3 sind ${numberFormatter.format(Math.round(d.monitorActiveY3))} Lizenzen aktiv.
+- ARR-Ziel: CHF ${formatArrMio(d.seriesAArr)} Mio., zu ${d.seriesAArrBriefingPct} Prozent aus Premium-Briefings und zu ${d.seriesAArrMonitorPct} Prozent aus Monitor.
+
+Zusatz-Umsätze:
+- Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF ${numberFormatter.format(d.sponsoringY1Annual)} pro Jahr bei. Ab dem 2. Geschäftsjahr sind es ${numberFormatter.format(d.sponsoringY2Annual)} CHF pro Jahr.
+- Anker-Kunde: Akquise eines Kunden im Monat ${d.ankerStartMonat > 0 ? d.ankerStartMonat : "—"} mit einer Spezialdienstleistung von ${d.ankerMonthly > 0 ? currencyFormatter.format(d.ankerMonthly) : "—"} pro Monat.`;
+
+const buildInvestitionsplanPlain = ({ seedBetrag, seriesABetrag, numberFormatter }) => `9.1 Investitionsplan
+
+Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom Produktlaunch hin zu Sales und Skalierung der Erlösströme Premium-Briefings, Monitor und Anker-Kunden-Lösungen.
+
+* Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech): Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und Premium-Briefings (Bezahlprodukt), Aufbau der Monitor-Plattform (Investitionsvolumen: CHF ${numberFormatter.format(seedBetrag)}).
+* Series A: Skalierung von Premium-Briefings und Monitor, Härtung der technischen Infrastruktur für Enterprise-Angebote (Anker-Kunde), redaktionelle Konsolidierung und Ausbau des Vertriebs (Investitionsvolumen: CHF ${numberFormatter.format(seriesABetrag)}).`;
+
+const formatActiveLicensesPlain = (point, numberFormatter) => {
+  if (!point) return "—";
+  return `${numberFormatter.format(Math.round(point.aktiveBriefing))} Premium-Briefings, ${numberFormatter.format(Math.round(point.aktiveMonitor))} Monitor, ${numberFormatter.format(Math.round(point.aktiveAnker))} Anker-Kunde (gesamt ${numberFormatter.format(Math.round(point.aktiveKunden))} Lizenzen aktiv)`;
+};
+
+const buildBreakEvenAnalysePlain = ({
+  breakEvenYearBaseline,
+  breakEvenMonatBaseline,
+  breakEvenPointBaseline,
+  breakEvenYearTotal,
+  breakEvenMonatTotal,
+  breakEvenPointTotal,
+  dummyData,
+  seriesAMonat,
+  spezialtopf,
+  numberFormatter,
+}) => {
+  const baselineLine =
+    breakEvenMonatBaseline != null
+      ? `Ohne Monitor/Anker (Baseline): im ${breakEvenYearBaseline}. Geschäftsjahr (Monat ${breakEvenMonatBaseline}) bei ${formatActiveLicensesPlain(breakEvenPointBaseline, numberFormatter)}.`
+      : "Ohne Monitor/Anker (Baseline): innerhalb von 48 Monaten nicht erreicht.";
+  const totalLine =
+    breakEvenMonatTotal != null
+      ? `Mit Monitor/Anker (Gesamtmodell): im ${breakEvenYearTotal}. Geschäftsjahr (Monat ${breakEvenMonatTotal}) bei ${formatActiveLicensesPlain(breakEvenPointTotal, numberFormatter)}.`
+      : "Mit Monitor/Anker (Gesamtmodell): innerhalb von 48 Monaten nicht erreicht.";
+
+  return `9.10 Break-Even-Analyse & Szenarien
+
+Die Gewinnschwelle (operativer Break-Even: Einnahmen ≥ Personal + Sachkosten + Spezialtopf, ohne Gewinnsteuer) wird plangemäss wie folgt erreicht:
+
+* ${baselineLine}
+* ${totalLine}
+
+Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
+
+Zur Absicherung wurden drei Szenarien modelliert:
+
+* Base Case (Erwarteter Verlauf): Erreichen des Schweizer Break-Even nach ${dummyData.baseCaseMonths} Monaten (Gesamtmodell). Erfolgreiches Series A-Closing im Monat ${seriesAMonat} und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von ${dummyData.ebitMargeY3} % im Jahr 3.
+* Best Case (Skalierungs-Turbo): Extrem hohe Marktdurchdringung im ersten Jahr über direkte B2B2B-Verbandsrahmenverträge (Low CAC). Der Schweizer Markt trägt sich bereits nach ${dummyData.bestCaseMonths} Monaten selbst. Die Series A-Runde kann zu einer deutlich höheren Unternehmensbewertung als ursprünglich veranschlagt durchgeführt werden.
+* Worst Case (Verzögerte Expansion): Der Schweizer Markteintritt benötigt aufgrund von Spardruck in der Verwaltung ${dummyData.worstCaseMonths} Monate länger bis zur Profitabilität. Das Series A-Closing verschiebt sich nach hinten. Der verlängerte Runway wird durch das gestaffelte Abrufen einer im Gesellschaftervertrag verankerten Meilenstein-Tranche der Seed-Investoren in Höhe von CHF ${numberFormatter.format(spezialtopf)} überbrückt.`;
+};
+
+const Highlight = ({ children }) => (
+  <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{children}</span>
+);
+
 function KPI({ title, value, helpText }) {
   return (
     <div className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
       <p className="text-xs font-normal text-black">{title}</p>
       <p className="mt-1 text-lg font-bold text-black">{value}</p>
       <p className="mt-1 text-xs font-normal text-black">{helpText}</p>
+    </div>
+  );
+}
+
+function SplitKPI({ title, helpText, entries }) {
+  return (
+    <div className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+      <p className="text-xs font-normal text-black">{title}</p>
+      <div className="mt-2 space-y-1.5">
+        {entries.map((entry) => (
+          <div key={entry.label} className="flex items-start justify-between gap-2 text-sm">
+            <span className="text-xs text-gray-700 leading-snug">{entry.label}</span>
+            <span className="font-bold text-black text-right leading-snug">{entry.value}</span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs font-normal text-black">{helpText}</p>
     </div>
   );
 }
@@ -125,7 +234,6 @@ const DEFAULT_SACHKOSTEN = normalizeSachkosten(planData.sachkosten);
 
 const DEFAULTS = {
   seedBetrag: 1000000,
-  seedMonat: 0,
   seriesABetrag: 0,
   seriesAMonat: 12,
   preSeedAfondPerdu: 100000,
@@ -144,6 +252,12 @@ const DEFAULTS = {
   sponsoringJahr2: 10000,
   sponsoringJahr3: 10000,
   sponsoringJahr4: 10000,
+  monitorStartMonat: 0,
+  monitorNeueLizenzenProMonat: 0,
+  monitorPreisProLizenz: 0,
+  ankerStartMonat: 0,
+  ankerPreisProLizenz: 0,
+  ankerAnzahlLizenzen: 0,
   roles: DEFAULT_ROLES,
   sachkostenItems: DEFAULT_SACHKOSTEN,
   sozialabgabenProzent: 16.0,
@@ -164,13 +278,14 @@ const getStored = (key, fallback) => {
 function App() {
   const [activeTab, setActiveTab] = useState("inputs"); // "inputs" | "calc" | "charts"
   const [seedBetrag, setSeedBetrag] = useState(() => getStored("seedBetrag", DEFAULTS.seedBetrag));
-  const [seedMonat, setSeedMonat] = useState(() => getStored("seedMonat", DEFAULTS.seedMonat));
   const [seriesABetrag, setSeriesABetrag] = useState(() => getStored("seriesABetrag", DEFAULTS.seriesABetrag));
-  const [seriesAMonat, setSeriesAMonat] = useState(() => getStored("seriesAMonat", DEFAULTS.seriesAMonat));
+  const [seriesAMonat, setSeriesAMonat] = useState(() =>
+    clampSeriesAMonat(getStored("seriesAMonat", DEFAULTS.seriesAMonat))
+  );
   const [preSeedAfondPerdu, setPreSeedAfondPerdu] = useState(() => getStored("preSeedAfondPerdu", DEFAULTS.preSeedAfondPerdu));
   const [preSeedBridge, setPreSeedBridge] = useState(() => getStored("preSeedBridge", DEFAULTS.preSeedBridge));
-  
-  const startkapital = (seedMonat === 0 ? seedBetrag : 0) + (seriesAMonat === 0 ? seriesABetrag : 0);
+
+  const startkapital = seedBetrag;
 
   const [neueKundenJ1, setNeueKundenJ1] = useState(() => getStored("neueKundenJ1", DEFAULTS.neueKundenJ1));
   const [neueKundenJ2, setNeueKundenJ2] = useState(() => getStored("neueKundenJ2", DEFAULTS.neueKundenJ2));
@@ -186,6 +301,24 @@ function App() {
   const [sponsoringJahr2, setSponsoringJahr2] = useState(() => getStored("sponsoringJahr2", DEFAULTS.sponsoringJahr2));
   const [sponsoringJahr3, setSponsoringJahr3] = useState(() => getStored("sponsoringJahr3", DEFAULTS.sponsoringJahr3));
   const [sponsoringJahr4, setSponsoringJahr4] = useState(() => getStored("sponsoringJahr4", DEFAULTS.sponsoringJahr4));
+  const [monitorStartMonat, setMonitorStartMonat] = useState(() =>
+    getStored("monitorStartMonat", DEFAULTS.monitorStartMonat)
+  );
+  const [monitorNeueLizenzenProMonat, setMonitorNeueLizenzenProMonat] = useState(() =>
+    getStored("monitorNeueLizenzenProMonat", DEFAULTS.monitorNeueLizenzenProMonat)
+  );
+  const [monitorPreisProLizenz, setMonitorPreisProLizenz] = useState(() =>
+    getStored("monitorPreisProLizenz", DEFAULTS.monitorPreisProLizenz)
+  );
+  const [ankerStartMonat, setAnkerStartMonat] = useState(() =>
+    getStored("ankerStartMonat", DEFAULTS.ankerStartMonat)
+  );
+  const [ankerPreisProLizenz, setAnkerPreisProLizenz] = useState(() =>
+    getStored("ankerPreisProLizenz", DEFAULTS.ankerPreisProLizenz)
+  );
+  const [ankerAnzahlLizenzen, setAnkerAnzahlLizenzen] = useState(() =>
+    getStored("ankerAnzahlLizenzen", DEFAULTS.ankerAnzahlLizenzen)
+  );
 
   const [roles, setRoles] = useState(() => getStored("roles", DEFAULTS.roles));
   const [sachkostenItems, setSachkostenItems] = useState(() => getStored("sachkostenItems", DEFAULTS.sachkostenItems));
@@ -228,7 +361,7 @@ function App() {
 
   const collectScenarioSnapshot = () => ({
     seedBetrag,
-    seedMonat,
+    seedMonat: SEED_MONAT,
     seriesABetrag,
     seriesAMonat,
     preSeedAfondPerdu,
@@ -247,6 +380,12 @@ function App() {
     sponsoringJahr2,
     sponsoringJahr3,
     sponsoringJahr4,
+    monitorStartMonat,
+    monitorNeueLizenzenProMonat,
+    monitorPreisProLizenz,
+    ankerStartMonat,
+    ankerPreisProLizenz,
+    ankerAnzahlLizenzen,
     roles,
     sachkostenItems,
     sozialabgabenProzent,
@@ -257,9 +396,8 @@ function App() {
 
   const applyScenarioSnapshot = (data) => {
     if (data.seedBetrag !== undefined) setSeedBetrag(data.seedBetrag);
-    if (data.seedMonat !== undefined) setSeedMonat(data.seedMonat);
     if (data.seriesABetrag !== undefined) setSeriesABetrag(data.seriesABetrag);
-    if (data.seriesAMonat !== undefined) setSeriesAMonat(data.seriesAMonat);
+    if (data.seriesAMonat !== undefined) setSeriesAMonat(clampSeriesAMonat(data.seriesAMonat));
     if (data.preSeedAfondPerdu !== undefined) setPreSeedAfondPerdu(data.preSeedAfondPerdu);
     if (data.preSeedBridge !== undefined) setPreSeedBridge(data.preSeedBridge);
     if (data.neueKundenJ1 !== undefined) setNeueKundenJ1(data.neueKundenJ1);
@@ -276,6 +414,12 @@ function App() {
     if (data.sponsoringJahr2 !== undefined) setSponsoringJahr2(data.sponsoringJahr2);
     if (data.sponsoringJahr3 !== undefined) setSponsoringJahr3(data.sponsoringJahr3);
     if (data.sponsoringJahr4 !== undefined) setSponsoringJahr4(data.sponsoringJahr4);
+    if (data.monitorStartMonat !== undefined) setMonitorStartMonat(data.monitorStartMonat);
+    if (data.monitorNeueLizenzenProMonat !== undefined) setMonitorNeueLizenzenProMonat(data.monitorNeueLizenzenProMonat);
+    if (data.monitorPreisProLizenz !== undefined) setMonitorPreisProLizenz(data.monitorPreisProLizenz);
+    if (data.ankerStartMonat !== undefined) setAnkerStartMonat(data.ankerStartMonat);
+    if (data.ankerPreisProLizenz !== undefined) setAnkerPreisProLizenz(data.ankerPreisProLizenz);
+    if (data.ankerAnzahlLizenzen !== undefined) setAnkerAnzahlLizenzen(data.ankerAnzahlLizenzen);
     if (data.roles !== undefined) setRoles(data.roles);
     if (data.sachkostenItems !== undefined) setSachkostenItems(normalizeSachkosten(data.sachkostenItems));
     if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
@@ -371,7 +515,7 @@ function App() {
       alert("Keine lokalen Alt-Szenarien (hekto3_templates) gefunden.");
       return;
     }
-    if (!window.confirm(`${names.length} lokale Szenarien ins Repo hochladen?`)) return;
+    if (!window.confirm(`${names.length} lokale Szenarien remote speichern?`)) return;
 
     const merged = { ...scenarioMap, ...legacy };
     try {
@@ -391,24 +535,27 @@ function App() {
 
   useEffect(() => {
     const data = {
-      seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
+      seedBetrag, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
       preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
       sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
+      monitorStartMonat, monitorNeueLizenzenProMonat, monitorPreisProLizenz,
+      ankerStartMonat, ankerPreisProLizenz, ankerAnzahlLizenzen,
       roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
     };
     Object.entries(data).forEach(([key, val]) => {
       localStorage.setItem(`hekto3_${key}`, JSON.stringify(val));
     });
   }, [
-    seedBetrag, seedMonat, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
+    seedBetrag, seriesABetrag, seriesAMonat, preSeedAfondPerdu, preSeedBridge, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4,
     preisJ1, preisAbJ2, preisAbJ3, verlaengerungNachJ1, verlaengerungNachJ2, verlaengerungNachJ3,
     sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4,
+    monitorStartMonat, monitorNeueLizenzenProMonat, monitorPreisProLizenz,
+    ankerStartMonat, ankerPreisProLizenz, ankerAnzahlLizenzen,
     roles, sachkostenItems, sozialabgabenProzent, gewinnsteuerRate, spezialtopf
   ]);
 
   const handleReset = () => {
     setSeedBetrag(DEFAULTS.seedBetrag);
-    setSeedMonat(DEFAULTS.seedMonat);
     setSeriesABetrag(DEFAULTS.seriesABetrag);
     setSeriesAMonat(DEFAULTS.seriesAMonat);
     setPreSeedAfondPerdu(DEFAULTS.preSeedAfondPerdu);
@@ -427,6 +574,12 @@ function App() {
     setSponsoringJahr2(DEFAULTS.sponsoringJahr2);
     setSponsoringJahr3(DEFAULTS.sponsoringJahr3);
     setSponsoringJahr4(DEFAULTS.sponsoringJahr4);
+    setMonitorStartMonat(DEFAULTS.monitorStartMonat);
+    setMonitorNeueLizenzenProMonat(DEFAULTS.monitorNeueLizenzenProMonat);
+    setMonitorPreisProLizenz(DEFAULTS.monitorPreisProLizenz);
+    setAnkerStartMonat(DEFAULTS.ankerStartMonat);
+    setAnkerPreisProLizenz(DEFAULTS.ankerPreisProLizenz);
+    setAnkerAnzahlLizenzen(DEFAULTS.ankerAnzahlLizenzen);
     setRoles(DEFAULTS.roles);
     setSachkostenItems(DEFAULTS.sachkostenItems);
     setSozialabgabenProzent(DEFAULTS.sozialabgabenProzent);
@@ -443,63 +596,91 @@ function App() {
 
     const points = [];
     const personalkostenByMonth = new Array(MONTHS + 1).fill(0);
-    /** Cohorts with current size and age in months */
-    const cohorts = [];
-    let cashbestand = startkapital;
+    const briefingCohorts = [];
+    const monitorCohorts = [];
+    let cashbestandTotal = startkapital;
+    let cashbestandBaseline = startkapital;
+    let verkaufteAbosBriefing = 0;
+    let verkaufteAbosMonitor = 0;
+    let verkaufteAbosAnker = 0;
+
+    const briefingPreisNachAlter = (age) => {
+      if (age < 12) return preisJ1;
+      if (age < 24) return preisAbJ2;
+      return preisAbJ3;
+    };
 
     for (let month = 1; month <= MONTHS; month += 1) {
       let fundingInflow = 0;
-      if (seedMonat === month) {
-        fundingInflow += seedBetrag;
-      }
-      if (seriesAMonat === month) {
-        fundingInflow += seriesABetrag;
-      }
+      if (seriesAMonat === month) fundingInflow += seriesABetrag;
+
       const year = yearByMonth(month);
-      const neueKunden =
-        year === 1
-          ? neueKundenJ1
-          : year === 2
-            ? neueKundenJ2
-            : year === 3
-              ? neueKundenJ3
-              : neueKundenJ4;
+      const neueBriefing =
+        year === 1 ? neueKundenJ1 : year === 2 ? neueKundenJ2 : year === 3 ? neueKundenJ3 : neueKundenJ4;
       const sponsoringProMonat = sponsoringByYear(year);
-      let lizenzCashInflow = 0;
+      let briefingCashInflow = 0;
+      let monitorCashInflow = 0;
 
-      const lizenzPreisNachAlter = (age) => {
-        if (age < 12) return preisJ1;
-        if (age < 24) return preisAbJ2;
-        return preisAbJ3;
-      };
-
-      for (let i = 0; i < cohorts.length; i += 1) {
-        cohorts[i].age += 1;
-        if (cohorts[i].age === 12) {
-          cohorts[i].size *= renew1;
-          lizenzCashInflow += cohorts[i].size * preisAbJ2 * 12;
+      for (let i = 0; i < briefingCohorts.length; i += 1) {
+        briefingCohorts[i].age += 1;
+        if (briefingCohorts[i].age === 12) {
+          briefingCohorts[i].size *= renew1;
+          briefingCashInflow += briefingCohorts[i].size * preisAbJ2 * 12;
         }
-        if (cohorts[i].age === 24) {
-          cohorts[i].size *= renew2;
-          lizenzCashInflow += cohorts[i].size * preisAbJ3 * 12;
+        if (briefingCohorts[i].age === 24) {
+          briefingCohorts[i].size *= renew2;
+          briefingCashInflow += briefingCohorts[i].size * preisAbJ3 * 12;
         }
-        if (cohorts[i].age === 36) {
-          cohorts[i].size *= renew3;
-          lizenzCashInflow += cohorts[i].size * preisAbJ3 * 12;
+        if (briefingCohorts[i].age === 36) {
+          briefingCohorts[i].size *= renew3;
+          briefingCashInflow += briefingCohorts[i].size * preisAbJ3 * 12;
         }
       }
 
-      // Neukunden zahlen den Jahrespreis des ersten Vertragsjahres upfront.
-      lizenzCashInflow += neueKunden * preisJ1 * 12;
-      cohorts.push({ size: neueKunden, age: 0 });
-      const aktiveKunden = cohorts.reduce((sum, cohort) => sum + cohort.size, 0);
+      briefingCashInflow += neueBriefing * preisJ1 * 12;
+      briefingCohorts.push({ size: neueBriefing, age: 0 });
+      verkaufteAbosBriefing += neueBriefing;
 
-      const umsatzLizenzen = cohorts.reduce((sum, cohort) => {
-        const cohortPreis = lizenzPreisNachAlter(cohort.age);
-        return sum + cohort.size * cohortPreis;
-      }, 0);
-      const gesamteinnahmen = umsatzLizenzen + sponsoringProMonat;
-      const cashwirksameEinnahmen = lizenzCashInflow + sponsoringProMonat;
+      const neueMonitor =
+        monitorStartMonat > 0 && month >= monitorStartMonat ? monitorNeueLizenzenProMonat : 0;
+
+      for (let i = 0; i < monitorCohorts.length; i += 1) {
+        monitorCohorts[i].age += 1;
+        if (monitorCohorts[i].age === 12 || monitorCohorts[i].age === 24 || monitorCohorts[i].age === 36) {
+          monitorCohorts[i].size *= renew1;
+          monitorCashInflow += monitorCohorts[i].size * monitorPreisProLizenz * 12;
+        }
+      }
+
+      if (neueMonitor > 0) {
+        monitorCashInflow += neueMonitor * monitorPreisProLizenz * 12;
+        monitorCohorts.push({ size: neueMonitor, age: 0 });
+        verkaufteAbosMonitor += neueMonitor;
+      }
+
+      const aktiveBriefing = briefingCohorts.reduce((sum, cohort) => sum + cohort.size, 0);
+      const aktiveMonitor = monitorCohorts.reduce((sum, cohort) => sum + cohort.size, 0);
+      const aktiveAnker =
+        ankerStartMonat > 0 && month >= ankerStartMonat ? ankerAnzahlLizenzen : 0;
+      if (month === ankerStartMonat && ankerStartMonat > 0 && ankerAnzahlLizenzen > 0) {
+        verkaufteAbosAnker += ankerAnzahlLizenzen;
+      }
+
+      const umsatzBriefing = briefingCohorts.reduce(
+        (sum, cohort) => sum + cohort.size * briefingPreisNachAlter(cohort.age),
+        0
+      );
+      const umsatzMonitor = monitorCohorts.reduce(
+        (sum, cohort) => sum + cohort.size * monitorPreisProLizenz,
+        0
+      );
+      const umsatzAnker = aktiveAnker * ankerPreisProLizenz;
+
+      const baselineGesamteinnahmen = umsatzBriefing + sponsoringProMonat;
+      const gesamteinnahmen = baselineGesamteinnahmen + umsatzMonitor + umsatzAnker;
+
+      const baselineCashwirksameEinnahmen = briefingCashInflow + sponsoringProMonat;
+      const cashwirksameEinnahmen = baselineCashwirksameEinnahmen + monitorCashInflow + umsatzAnker;
 
       const personnel = calcMonthlyPersonnel(roles, month, sozialabgabenProzent);
       const { total: sachkostenBase, breakdown } = calcMonthlySachkosten(sachkostenItems, month, {
@@ -507,46 +688,67 @@ function App() {
       });
       const reserve = calcReserveMonthly(sachkostenItems, month, reserveItem, breakdown);
       const sachkosten = sachkostenBase + reserve;
-
       const aufwandOhneGewinnsteuer = personnel.personalkosten + sachkosten;
-      const ebitaMonat = gesamteinnahmen - aufwandOhneGewinnsteuer;
-      const gewinnsteuer = ebitaMonat > 0 ? ebitaMonat * (gewinnsteuerRate / 100) : 0;
+
+      const baselineEbita = baselineGesamteinnahmen - aufwandOhneGewinnsteuer;
+      const totalEbita = gesamteinnahmen - aufwandOhneGewinnsteuer;
+      const baselineGewinnsteuer = baselineEbita > 0 ? baselineEbita * (gewinnsteuerRate / 100) : 0;
+      const gewinnsteuer = totalEbita > 0 ? totalEbita * (gewinnsteuerRate / 100) : 0;
 
       personalkostenByMonth[month] = personnel.personalkosten;
-      const spezialtopfKosten = month <= 36 ? (spezialtopf / 36) : 0;
+      const spezialtopfKosten = month <= 36 ? spezialtopf / 36 : 0;
+      const baselineGesamtausgaben = aufwandOhneGewinnsteuer + baselineGewinnsteuer + spezialtopfKosten;
       const gesamtausgaben = aufwandOhneGewinnsteuer + gewinnsteuer + spezialtopfKosten;
-      const netBurn = cashwirksameEinnahmen - gesamtausgaben;
-      cashbestand += netBurn + fundingInflow;
+
+      cashbestandBaseline += baselineCashwirksameEinnahmen - baselineGesamtausgaben + fundingInflow;
+      cashbestandTotal += cashwirksameEinnahmen - gesamtausgaben + fundingInflow;
 
       points.push({
         month,
         year,
-        aktiveKunden: Math.max(0, aktiveKunden),
-        umsatzLizenzen,
+        aktiveBriefing: Math.max(0, aktiveBriefing),
+        aktiveMonitor: Math.max(0, aktiveMonitor),
+        aktiveAnker: Math.max(0, aktiveAnker),
+        aktiveKunden: Math.max(0, aktiveBriefing + aktiveMonitor + aktiveAnker),
+        umsatzLizenzen: umsatzBriefing,
+        umsatzMonitor,
+        umsatzAnker,
+        baselineGesamteinnahmen,
         gesamteinnahmen,
+        baselineCashwirksameEinnahmen,
         cashwirksameEinnahmen,
+        baselineGesamtausgaben,
         gesamtausgaben,
         bruttolohn: personnel.bruttolohn,
         sozialabgaben: personnel.sozialabgaben,
         personalkosten: personnel.personalkosten,
         sachkosten,
+        baselineGewinnsteuer,
         gewinnsteuer,
         fteSum: personnel.fteSum,
         headSum: personnel.headSum,
         spezialtopfKosten,
         fundingInflow,
         sponsoringProMonat,
-        cashbestand,
+        baselineOperativeAusgaben: personnel.personalkosten + sachkosten + spezialtopfKosten,
+        baselineCashbestand: cashbestandBaseline,
+        cashbestand: cashbestandTotal,
+        verkaufteAbosBriefing,
+        verkaufteAbosMonitor,
+        verkaufteAbosAnker,
       });
     }
 
     for (let i = 0; i < points.length; i += 1) {
       const m = points[i].month;
       const { personalkosten3Monate, mindestliquiditaet } = calcMindestliquiditaet(personalkostenByMonth, m, RESERVE_CHF);
-      const liquiditaetspuffer = points[i].cashbestand - mindestliquiditaet;
       points[i].mindestliquiditaet = mindestliquiditaet;
-      points[i].liquiditaetspuffer = liquiditaetspuffer;
       points[i].personalkosten3Monate = personalkosten3Monate;
+      points[i].baselineLiquiditaetspuffer = points[i].baselineCashbestand - mindestliquiditaet;
+      points[i].liquiditaetspuffer = points[i].cashbestand - mindestliquiditaet;
+      points[i].deltaEinnahmen = points[i].umsatzMonitor + points[i].umsatzAnker;
+      points[i].deltaCashbestand = points[i].cashbestand - points[i].baselineCashbestand;
+      points[i].deltaLiquiditaetspuffer = points[i].liquiditaetspuffer - points[i].baselineLiquiditaetspuffer;
     }
 
     return points;
@@ -568,10 +770,16 @@ function App() {
     sponsoringJahr2,
     sponsoringJahr3,
     sponsoringJahr4,
+    monitorStartMonat,
+    monitorNeueLizenzenProMonat,
+    monitorPreisProLizenz,
+    ankerStartMonat,
+    ankerPreisProLizenz,
+    ankerAnzahlLizenzen,
     seedBetrag,
-    seedMonat,
     seriesABetrag,
     seriesAMonat,
+    startkapital,
     verlaengerungNachJ1,
     verlaengerungNachJ2,
     verlaengerungNachJ3,
@@ -580,13 +788,25 @@ function App() {
   const month48 = simulation[simulation.length - 1];
   const month36 = simulation[35] ?? month48;
 
-  const breakEvenMonat = useMemo(() => {
+  const breakEvenMonatBaseline = useMemo(() => {
+    const hit = simulation.find(
+      (p) => p.baselineGesamteinnahmen >= p.personalkosten + p.sachkosten + p.spezialtopfKosten
+    );
+    return hit ? hit.month : null;
+  }, [simulation]);
+
+  const breakEvenMonatTotal = useMemo(() => {
     const hit = simulation.find(
       (p) => p.gesamteinnahmen >= p.personalkosten + p.sachkosten + p.spezialtopfKosten
     );
     return hit ? hit.month : null;
   }, [simulation]);
-  const breakEvenPoint = breakEvenMonat != null ? simulation[breakEvenMonat - 1] : null;
+
+  const breakEvenMonat = breakEvenMonatTotal;
+  const breakEvenPointBaseline =
+    breakEvenMonatBaseline != null ? simulation[breakEvenMonatBaseline - 1] : null;
+  const breakEvenPointTotal = breakEvenMonatTotal != null ? simulation[breakEvenMonatTotal - 1] : null;
+  const breakEvenPoint = breakEvenPointTotal;
 
   const ersteFloorVerletzung = useMemo(() => {
     const hit = simulation.find((p) => p.liquiditaetspuffer < 0);
@@ -601,13 +821,21 @@ function App() {
 
   const kapitalAnalyse = useMemo(() => {
     const minPuffer = Math.min(...simulation.map((p) => p.liquiditaetspuffer));
+    const minPufferBaseline = Math.min(...simulation.map((p) => p.baselineLiquiditaetspuffer));
     const erforderlichesStartkapital = Math.max(0, startkapital - minPuffer);
+    const erforderlichesStartkapitalBaseline = Math.max(0, startkapital - minPufferBaseline);
     const chartData = simulation.map((p) => ({
       ...p,
       startkapitalBeiTouchInMonat: Math.max(0, startkapital - p.liquiditaetspuffer),
       erforderlichesStartkapital,
     }));
-    return { minPuffer, erforderlichesStartkapital, chartData };
+    return {
+      minPuffer,
+      minPufferBaseline,
+      erforderlichesStartkapital,
+      erforderlichesStartkapitalBaseline,
+      chartData,
+    };
   }, [simulation, startkapital]);
 
   const gewinnjahrEbt = useMemo(() => {
@@ -671,6 +899,64 @@ function App() {
     verlaengerungNachJ2,
   ]);
 
+  const monitorCalcDetails = useMemo(() => {
+    if (monitorStartMonat <= 0 || monitorNeueLizenzenProMonat <= 0 || monitorPreisProLizenz <= 0) {
+      return { active: false };
+    }
+    const years = [1, 2, 3].map((y) => {
+      const startM = (y - 1) * 12 + 1;
+      const endM = y * 12;
+      const yearPoints = simulation.filter((p) => p.month >= startM && p.month <= endM);
+      const soldBeforeYear = startM > 1 ? (simulation[startM - 2]?.verkaufteAbosMonitor ?? 0) : 0;
+      const soldInYear = (simulation[endM - 1]?.verkaufteAbosMonitor ?? 0) - soldBeforeYear;
+      const umsatzJahr = yearPoints.reduce((sum, p) => sum + p.umsatzMonitor, 0);
+      const endPoint = simulation[endM - 1];
+      return {
+        year: y,
+        soldInYear,
+        umsatzJahr,
+        endActive: endPoint?.aktiveMonitor ?? 0,
+        endMrr: endPoint?.umsatzMonitor ?? 0,
+      };
+    });
+    return {
+      active: true,
+      startMonat: monitorStartMonat,
+      neueProMonat: monitorNeueLizenzenProMonat,
+      preis: monitorPreisProLizenz,
+      years,
+    };
+  }, [simulation, monitorStartMonat, monitorNeueLizenzenProMonat, monitorPreisProLizenz]);
+
+  const ankerCalcDetails = useMemo(() => {
+    if (ankerStartMonat <= 0 || ankerAnzahlLizenzen <= 0 || ankerPreisProLizenz <= 0) {
+      return { active: false };
+    }
+    const monatsMrr = ankerAnzahlLizenzen * ankerPreisProLizenz;
+    const years = [1, 2, 3].map((y) => {
+      const startM = (y - 1) * 12 + 1;
+      const endM = y * 12;
+      const yearPoints = simulation.filter((p) => p.month >= startM && p.month <= endM);
+      const monthsActive =
+        ankerStartMonat > endM ? 0 : ankerStartMonat <= startM ? 12 : endM - ankerStartMonat + 1;
+      const umsatzJahr = yearPoints.reduce((sum, p) => sum + p.umsatzAnker, 0);
+      return {
+        year: y,
+        monthsActive,
+        umsatzJahr,
+        endMrr: simulation[endM - 1]?.umsatzAnker ?? 0,
+      };
+    });
+    return {
+      active: true,
+      startMonat: ankerStartMonat,
+      lizenzen: ankerAnzahlLizenzen,
+      preis: ankerPreisProLizenz,
+      monatsMrr,
+      years,
+    };
+  }, [simulation, ankerStartMonat, ankerAnzahlLizenzen, ankerPreisProLizenz]);
+
   const kennzahlen = useMemo(() => {
     const years = [1, 2, 3];
     const results = years.map((y) => {
@@ -679,13 +965,18 @@ function App() {
       const yearPoints = simulation.filter((p) => p.month >= startM && p.month <= endM);
 
       const lastMonthPoint = simulation[endM - 1] || yearPoints[yearPoints.length - 1];
-      const arr = lastMonthPoint ? lastMonthPoint.umsatzLizenzen * 12 : 0;
+      const arr = lastMonthPoint
+        ? (lastMonthPoint.umsatzLizenzen + lastMonthPoint.umsatzMonitor + lastMonthPoint.umsatzAnker) * 12
+        : 0;
 
-      const betriebskosten = yearPoints.reduce((sum, p) => sum + p.gesamtausgaben, 0);
-
-      const ebitan = yearPoints.reduce((sum, p) => sum + (p.gesamteinnahmen - p.gesamtausgaben), 0);
+      const betriebskosten = yearPoints.reduce(
+        (sum, p) => sum + p.personalkosten + p.sachkosten + p.spezialtopfKosten,
+        0
+      );
+      const gesamtausgaben = yearPoints.reduce((sum, p) => sum + p.gesamtausgaben, 0);
 
       const gesamteinnahmen = yearPoints.reduce((sum, p) => sum + p.gesamteinnahmen, 0);
+      const ebitan = gesamteinnahmen - betriebskosten;
       const bruttomarge = gesamteinnahmen > 0 ? (ebitan / gesamteinnahmen) * 100 : 0;
 
       const totalBurn = yearPoints.reduce((sum, p) => sum + Math.max(0, p.gesamtausgaben - p.cashwirksameEinnahmen), 0);
@@ -719,6 +1010,7 @@ function App() {
         year: y,
         arr,
         betriebskosten,
+        gesamtausgaben,
         ebitan,
         bruttomarge,
         avgBurnRate,
@@ -732,23 +1024,21 @@ function App() {
     return { results, totalKapitalbedarf };
   }, [simulation]);
 
-  const totalVerkaufteAbosBeiBreakEven = useMemo(() => {
-    if (breakEvenMonat == null) return null;
-    let sum = 0;
-    for (let m = 1; m <= breakEvenMonat; m += 1) {
-      const y = yearByMonth(m);
-      const neueKunden =
-        y === 1
-          ? neueKundenJ1
-          : y === 2
-            ? neueKundenJ2
-            : y === 3
-              ? neueKundenJ3
-              : neueKundenJ4;
-      sum += neueKunden;
-    }
-    return sum;
-  }, [breakEvenMonat, neueKundenJ1, neueKundenJ2, neueKundenJ3, neueKundenJ4]);
+  const formatLicenseSplit = (point) => {
+    if (!point) return "—";
+    return `Briefing ${numberFormatter.format(Math.round(point.aktiveBriefing))} · Monitor ${numberFormatter.format(Math.round(point.aktiveMonitor))} · Anker ${numberFormatter.format(Math.round(point.aktiveAnker))}`;
+  };
+
+  const formatAboSplit = (point) => {
+    if (!point) return "—";
+    return `Briefing ${numberFormatter.format(point.verkaufteAbosBriefing)} · Monitor ${numberFormatter.format(point.verkaufteAbosMonitor)} · Anker ${numberFormatter.format(point.verkaufteAbosAnker)}`;
+  };
+
+  const erforderlichesKapitalTotal = Math.max(0, seedBetrag + seriesABetrag - kapitalAnalyse.minPuffer);
+  const erforderlichesKapitalBaseline = Math.max(
+    0,
+    seedBetrag + seriesABetrag - kapitalAnalyse.minPufferBaseline
+  );
 
   const guvData = useMemo(() => {
     const years = [1, 2, 3];
@@ -758,6 +1048,8 @@ function App() {
       const yearPoints = simulation.filter((p) => p.year === y);
 
       let umsatzLizenzen = 0;
+      let umsatzMonitor = 0;
+      let umsatzAnker = 0;
       let sponsoring = 0;
       let personal = 0;
       let sachkosten = 0;
@@ -766,6 +1058,8 @@ function App() {
 
       yearPoints.forEach((p) => {
         umsatzLizenzen += p.umsatzLizenzen;
+        umsatzMonitor += p.umsatzMonitor;
+        umsatzAnker += p.umsatzAnker;
         sponsoring += p.sponsoringProMonat;
         personal += p.personalkosten;
         sachkosten += p.sachkosten;
@@ -786,7 +1080,7 @@ function App() {
       const marketing = totalW > 0 ? sachkosten * (mktW / totalW) : 0;
       const admin = sachkosten - tech - marketing + spezial;
 
-      const gesamtertrag = umsatzLizenzen + sponsoring;
+      const gesamtertrag = umsatzLizenzen + umsatzMonitor + umsatzAnker + sponsoring;
       const ebitda = gesamtertrag - personal - tech - marketing - admin;
       const abschreibungen = 0;
       const ebit = ebitda - abschreibungen;
@@ -795,6 +1089,8 @@ function App() {
 
       results[y] = {
         umsatzLizenzen,
+        umsatzMonitor,
+        umsatzAnker,
         sponsoring,
         gesamtertrag,
         personal,
@@ -877,17 +1173,25 @@ function App() {
         : 10000;
 
     // 3. Series A Year
-    const seriesAYear = Math.floor(((seriesAMonat === 0 ? 1 : seriesAMonat) - 1) / 12) + 1;
+    const seriesAYear = Math.floor((seriesAMonat - 1) / 12) + 1;
     const seriesAStartYear = seriesAYear + 1;
 
-    // 4. Lizenzen
-    const seedActiveLizenzen = simulation[seriesAMonat === 0 ? 11 : seriesAMonat - 1]?.aktiveKunden ?? 0;
-    const seedAccounts = Math.round(seedActiveLizenzen / 5);
-    const seriesAActiveLizenzen = simulation[35]?.aktiveKunden ?? 0;
+    // 4. Lizenzen & ARR (Seed = vor Series A, Series A = Ende Jahr 3)
+    const seedPoint = simulation[seriesAMonat - 1];
+    const y2Point = simulation[23];
+    const y3Point = simulation[35];
+    const seedBriefingMrr = seedPoint?.umsatzLizenzen ?? 0;
+    const seedMonitorMrr = seedPoint?.umsatzMonitor ?? 0;
+    const seedArrSplit = calcArrSplit(seedBriefingMrr, seedMonitorMrr);
+    const seriesABriefingMrr = y3Point?.umsatzLizenzen ?? 0;
+    const seriesAMonitorMrr = y3Point?.umsatzMonitor ?? 0;
+    const seriesAArrSplit = calcArrSplit(seriesABriefingMrr, seriesAMonitorMrr);
 
-    // 5. ARR target
-    const seedARR = (simulation[seriesAMonat === 0 ? 11 : seriesAMonat - 1]?.umsatzLizenzen ?? 0) * 12;
-    const seriesAARR = (simulation[35]?.umsatzLizenzen ?? 0) * 12;
+    const seedActiveLizenzen = seedPoint?.aktiveKunden ?? 0;
+    const seedAccounts = Math.round(seedActiveLizenzen / 5);
+    const seriesAActiveLizenzen = y3Point?.aktiveKunden ?? 0;
+    const seedARR = seedArrSplit.totalArr;
+    const seriesAARR = seriesAArrSplit.totalArr;
 
     // 6. Sponsoring
     const sponsoringStartYear = sponsoringJahr1 > 0 ? 1 : sponsoringJahr2 > 0 ? 2 : sponsoringJahr3 > 0 ? 3 : sponsoringJahr4 > 0 ? 4 : 2;
@@ -895,7 +1199,7 @@ function App() {
 
     // 7. Quarter names
     const getQuarterOnly = (m) => "Q" + (Math.floor(((m === 0 ? 1 : m) - 1) % 12 / 3) + 1);
-    const seedQuarter = getQuarterOnly(seedMonat);
+    const seedQuarter = getQuarterOnly(SEED_MONAT);
     const seriesAQuarter = getQuarterOnly(seriesAMonat);
 
     // 8. Break even
@@ -922,6 +1226,28 @@ function App() {
       seriesAActiveLizenzen,
       seedARR,
       seriesAARR,
+      seedBriefingActive: seedPoint?.aktiveBriefing ?? 0,
+      seedBriefingAccounts: Math.round((seedPoint?.aktiveBriefing ?? 0) / 5),
+      seedMonitorActive: seedPoint?.aktiveMonitor ?? 0,
+      seedArr: seedARR,
+      seedArrBriefingPct: seedArrSplit.briefingPct,
+      seedArrMonitorPct: seedArrSplit.monitorPct,
+      briefingActiveY2: y2Point?.aktiveBriefing ?? 0,
+      briefingActiveY3: y3Point?.aktiveBriefing ?? 0,
+      briefingSoldY3: y3Point?.verkaufteAbosBriefing ?? 0,
+      monitorActiveY2: y2Point?.aktiveMonitor ?? 0,
+      monitorActiveY3: y3Point?.aktiveMonitor ?? 0,
+      monitorSoldY3: y3Point?.verkaufteAbosMonitor ?? 0,
+      seriesAArr: seriesAARR,
+      seriesAArrBriefingPct: seriesAArrSplit.briefingPct,
+      seriesAArrMonitorPct: seriesAArrSplit.monitorPct,
+      seedBriefingPriceAnnual: preisJ1 * 12,
+      targetBriefingPriceAnnual: preisAbJ3 * 12,
+      monitorPriceAnnual: monitorPreisProLizenz * 12,
+      sponsoringY1Annual: sponsoringJahr1 * 12,
+      sponsoringY2Annual: sponsoringJahr2 * 12,
+      ankerStartMonat,
+      ankerMonthly: ankerAnzahlLizenzen * ankerPreisProLizenz,
       sponsoringStartYear,
       sponsoringAmountPerYear,
       seedQuarter,
@@ -933,19 +1259,30 @@ function App() {
       worstCaseMonths,
       avgSalary,
     };
-  }, [simulation, guvData, roles, seedMonat, seriesAMonat, sponsoringJahr1, sponsoringJahr2, sponsoringJahr3, sponsoringJahr4, breakEvenMonat]);
+  }, [
+    simulation,
+    guvData,
+    roles,
+    seriesAMonat,
+    sponsoringJahr1,
+    sponsoringJahr2,
+    sponsoringJahr3,
+    sponsoringJahr4,
+    breakEvenMonat,
+    preisJ1,
+    preisAbJ3,
+    monitorPreisProLizenz,
+    ankerStartMonat,
+    ankerAnzahlLizenzen,
+    ankerPreisProLizenz,
+  ]);
 
   const handleCopyText = () => {
     const text = `9. Finanzplan (Zahlenteil)
 
 Die finanzielle Planung von Attaché spiegelt ein hochskalierbares, technologiegestütztes B2B-Geschäftsmodell wider. Um das Marktpotenzial der Executive Intelligence in der Schweiz zu beweisen und die Plattform anschliessend zum break Even zu skalieren, ist die Finanzierungsstruktur in drei Phasen unterteilt: Pre-Seed (Validierung), Seed (Markteintritt & Break-even) und Series A (Konsolidierung).
 
-9.1 Investitionsplan
-
-Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom der Produktlaunch hin zu Sales.
-
-* Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech): Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und des ersten Bezahlbreifings (Investitionsvolumen: CHF ${numberFormatter.format(seedBetrag)}).
-Series A* Ausbau des publizistischen Angebots auf insgesamt drei Bezahlbreifings sowie sowie Härtung der technischen Infrastruktur und redaktionelle Konsolidierung. (Investitionsvolumen: CHF ${numberFormatter.format(seriesABetrag)}).
+${buildInvestitionsplanPlain({ seedBetrag, seriesABetrag, numberFormatter })}
 
 9.2 Betriebskostenplanung (Kostenstruktur / OpEx)
 
@@ -955,13 +1292,7 @@ Die betrieblichen Aufwendungen (OpEx) sind durch die Struktur des wissensbasiert
 * Technologie- & Serverkosten: Beinhaltet hocheffizientes Hosting sowie die SaaS-Gebühren für das CRM- und Auslieferungssystem (Postmark, Statamic). Veranschlagt sind CHF ${numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-12")?.unitMonth ?? 3000)} pro Monat.
 * Vertrieb & horizontales Wachstum: Budgets Series A für das B2B-Enterprise-Sales-Team. Nach der Series A steigen die variablen Marketing- und Vertriebskosten auf CHF ${numberFormatter.format(sachkostenItems.find((i) => i.id === "sach-2")?.costY3 ?? 42000)} jährlich, um den horizontalen Rollout voranzutreiben.
 
-9.3 Umsatz- & Absatzplanung
-
-Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (ARR) mit jährlicher Vorauszahlung.
-
-* Seed-Phase (Jahr 1 bis ${dummyData.seriesAYear}): Fokus auf die Schweiz. Erreichen von ${numberFormatter.format(Math.round(dummyData.seedActiveLizenzen))} aktiven Lizenzen über ca. ${dummyData.seedAccounts} B2B-Accounts zu einem rabattierten Einstiegspreis von CHF ${numberFormatter.format(preisJ1 * 12)} pro Lizenz/Jahr (ARR-Ziel: CHF ${(dummyData.seedARR / 1000000).toFixed(2)} Mio.).
-* Series A-Phase (ab Jahr 2): Schrittweise Harmonisierung auf den regulären Zielpreis von CHF ${numberFormatter.format(preisAbJ3 * 12)} pro Lizenz/Jahr*. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) und den Eintritt in den DACH-Raum (horizontale Skalierung) steigt das Absatzvolumen auf 3'103 Lizenzen (ARR-Ziel: CHF 2.69 Mio.).
-* Zusatz-Umsätze: Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF ${numberFormatter.format(sponsoringJahr1 * 12)} pro Jahr bei. Ab dem 2. Geschäftsjahr sind es ${numberFormatter.format(sponsoringJahr2 * 12)} CHF pro jahr.
+${buildUmsatzAbsatzplanungPlain({ d: dummyData, numberFormatter, currencyFormatter })}
 
 9.4 Plan-Gewinn- & Verlustrechnung (GuV)
 
@@ -969,7 +1300,9 @@ Die folgende Tabelle zeigt die konsolidierte Erfolgsrechnung inklusive der Expan
 
 Position (in CHF) | Geschäftsjahr 1 (Seed) | Geschäftsjahr 2${dummyData.breakEvenYear === 2 ? " (Break-even)" : ""} | Geschäftsjahr 3${dummyData.breakEvenYear === 3 ? " (Break-even)" : ""}${dummyData.seriesAYear === 3 ? " (Series A)" : ""}
 ------------------|------------------------|--------------------------------|-------------------------
-Umsatzerlöse (ARR Lizenzen) | ${numberFormatter.format(Math.round(guvData[1].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[2].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[3].umsatzLizenzen))}
+Umsatzerlöse Premium-Briefings | ${numberFormatter.format(Math.round(guvData[1].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[2].umsatzLizenzen))} | ${numberFormatter.format(Math.round(guvData[3].umsatzLizenzen))}
+Umsatzerlöse Monitor | ${numberFormatter.format(Math.round(guvData[1].umsatzMonitor))} | ${numberFormatter.format(Math.round(guvData[2].umsatzMonitor))} | ${numberFormatter.format(Math.round(guvData[3].umsatzMonitor))}
+Umsatzerlöse Anker-Kunde | ${numberFormatter.format(Math.round(guvData[1].umsatzAnker))} | ${numberFormatter.format(Math.round(guvData[2].umsatzAnker))} | ${numberFormatter.format(Math.round(guvData[3].umsatzAnker))}
 Erlöse B2B-Sponsoring / Events | ${numberFormatter.format(Math.round(guvData[1].sponsoring))} | ${numberFormatter.format(Math.round(guvData[2].sponsoring))} | ${numberFormatter.format(Math.round(guvData[3].sponsoring))}
 Gesamtertrag | ${numberFormatter.format(Math.round(guvData[1].gesamtertrag))} | ${numberFormatter.format(Math.round(guvData[2].gesamtertrag))} | ${numberFormatter.format(Math.round(guvData[3].gesamtertrag))}
 - Personalaufwand (inkl. Sozialleistungen) | ${numberFormatter.format(Math.round(guvData[1].personal))} | ${numberFormatter.format(Math.round(guvData[2].personal))} | ${numberFormatter.format(Math.round(guvData[3].personal))}
@@ -999,15 +1332,18 @@ Der Gesamtkapitalbedarf bis zum Erreichen der globalen Profitabilität ist in dr
 3. Series A-Runde (In Vorbereitung): Geplante Aufnahme von CHF ${(seriesABetrag / 1000000).toFixed(1)} Mio. im Geschäftsjahr ${dummyData.seriesAYear}, initiiert durch institutionelle B2B-SaaS- und Growth-Investoren, um die Internationalisierungsachse zu finanzieren.
 4. Option Pool (ESOP): Reservierung von 10 % der Anteile zur langfristigen Incentivierung von Schlüsselpositionen (CTO, Head of Sales, Lead-Analysten).
 
-9.10 Break-Even-Analyse & Szenarien
-
-Die Gewinnschwelle (Schweizer Break-Even) wird plangemäss im ${dummyData.breakEvenYear}. Geschäftsjahr bei Erreichen von ${breakEvenPoint != null ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden)) : "—"} Lizenzen überschritten. Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
-
-Zur Absicherung wurden drei Szenarien modelliert:
-
-* Base Case (Erwarteter Verlauf): Erreichen des Schweizer Break-Even nach ${dummyData.baseCaseMonths} Monaten. Erfolgreiches Series A-Closing im Monat ${seriesAMonat} und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von ${dummyData.ebitMargeY3} % im Jahr 3.
-* Best Case (Skalierungs-Turbo): Extrem hohe Marktdurchdringung im ersten Jahr über direkte B2B2B-Verbandsrahmenverträge (Low CAC). Der Schweizer Markt trägt sich bereits nach ${dummyData.bestCaseMonths} Monaten selbst. Die Series A-Runde kann zu einer deutlich höheren Unternehmensbewertung als ursprünglich veranschlagt durchgeführt werden.
-* Worst Case (Verzögerte Expansion): Der Schweizer Markteintritt benötigt aufgrund von Spardruck in der Verwaltung ${dummyData.worstCaseMonths} Monate länger bis zur Profitabilität. Das Series A-Closing verschiebt sich nach hinten. Der verlängerte Runway wird durch das gestaffelte Abrufen einer im Gesellschaftervertrag verankerten Meilenstein-Tranche der Seed-Investoren in Höhe von CHF ${numberFormatter.format(spezialtopf)} überbrückt.`;
+${buildBreakEvenAnalysePlain({
+  breakEvenYearBaseline: breakEvenMonatBaseline != null ? yearByMonth(breakEvenMonatBaseline) : null,
+  breakEvenMonatBaseline,
+  breakEvenPointBaseline,
+  breakEvenYearTotal: breakEvenMonatTotal != null ? yearByMonth(breakEvenMonatTotal) : null,
+  breakEvenMonatTotal,
+  breakEvenPointTotal,
+  dummyData,
+  seriesAMonat,
+  spezialtopf,
+  numberFormatter,
+})}`;
 
     navigator.clipboard.writeText(text).then(() => {
       alert("Text erfolgreich kopiert!");
@@ -1094,6 +1430,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </button>
           )}
           <button
+            type="button"
+            onClick={handleReset}
             className="border-2 border-black bg-white px-3 py-2 text-sm font-bold text-black transition-shadow hover:shadow-[2px_2px_0px_#000] active:translate-y-[1px] cursor-pointer"
             title="Alle Werte auf Standard zurücksetzen"
           >
@@ -1104,35 +1442,94 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
       {/* KPIs Grid */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KPI
+        <SplitKPI
           title="Break-even (operativ)"
-          value={breakEvenMonat != null ? `ab Monat ${breakEvenMonat}` : "—"}
-          helpText="Erster Monat mit Einnahmen ≥ Ausgaben."
+          entries={[
+            {
+              label: "Ohne Monitor/Anker",
+              value: breakEvenMonatBaseline != null ? `ab Monat ${breakEvenMonatBaseline}` : "—",
+            },
+            {
+              label: "Mit Monitor/Anker",
+              value: breakEvenMonatTotal != null ? `ab Monat ${breakEvenMonatTotal}` : "—",
+            },
+          ]}
+          helpText="Erster Monat mit Einnahmen ≥ operativen Ausgaben (ohne Gewinnsteuer)."
         />
-        <KPI
-          title="Aktive Kunden bei Break Even"
-          value={
-            breakEvenPoint != null
-              ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden))
-              : "—"
-          }
-          helpText="Kundenbestand im ersten Monat mit Einnahmen ≥ Ausgaben."
+        <SplitKPI
+          title="Aktive Lizenzen bei Break-even"
+          entries={[
+            {
+              label: `Ohne Monitor/Anker${breakEvenMonatBaseline != null ? ` (Monat ${breakEvenMonatBaseline})` : ""}`,
+              value: formatLicenseSplit(breakEvenPointBaseline),
+            },
+            {
+              label: `Mit Monitor/Anker${breakEvenMonatTotal != null ? ` (Monat ${breakEvenMonatTotal})` : ""}`,
+              value: formatLicenseSplit(breakEvenPointTotal),
+            },
+          ]}
+          helpText="Lizenzbestand nach Briefing, Monitor und Anker-Kunde im jeweiligen Break-even-Monat."
         />
-        <KPI
-          title="Total verkaufte Abos bei Break Even"
-          value={
-            totalVerkaufteAbosBeiBreakEven != null
-              ? numberFormatter.format(totalVerkaufteAbosBeiBreakEven)
-              : "—"
-          }
-          helpText="Summe aller verkauften Abonnements bis zum Break-even-Monat."
+        <SplitKPI
+          title="Total verkaufte Abos bei Break-even"
+          entries={[
+            {
+              label: `Ohne Monitor/Anker${breakEvenMonatBaseline != null ? ` (Monat ${breakEvenMonatBaseline})` : ""}`,
+              value: formatAboSplit(breakEvenPointBaseline),
+            },
+            {
+              label: `Mit Monitor/Anker${breakEvenMonatTotal != null ? ` (Monat ${breakEvenMonatTotal})` : ""}`,
+              value: formatAboSplit(breakEvenPointTotal),
+            },
+          ]}
+          helpText="Kumulierte verkaufte Abonnements bis zum jeweiligen Break-even-Monat."
         />
-        <KPI
+        <SplitKPI
           title="Erforderliches Kapital (Seed + Series A)"
-          value={currencyFormatter.format(Math.max(0, seedBetrag + seriesABetrag - kapitalAnalyse.minPuffer))}
-          helpText="Gesamtes benötigtes Kapital (Seed + Series A), um eine Unterschreitung des Liquiditätspuffers zu verhindern."
+          entries={[
+            {
+              label: "Ohne Monitor/Anker",
+              value: currencyFormatter.format(erforderlichesKapitalBaseline),
+            },
+            {
+              label: "Mit Monitor/Anker",
+              value: currencyFormatter.format(erforderlichesKapitalTotal),
+            },
+          ]}
+          helpText="Benötigtes Kapital, um eine Unterschreitung des Liquiditätspuffers zu verhindern."
         />
       </div>
+
+      <aside className="border-2 border-black bg-[#FAFAFA] px-4 py-3 text-[11px] leading-relaxed text-gray-800">
+        <p className="font-bold text-black text-xs mb-2">Modellannahmen</p>
+        <ol className="list-decimal space-y-1.5 pl-4">
+          <li>
+            <strong>Planstart (Monat 0):</strong> Betriebsaufnahme der AG. Das Modell simuliert ab diesem Zeitpunkt über 48 Monate.
+          </li>
+          <li>
+            <strong>Pre-Seed & Bridge (vor Monat 0):</strong>{" "}
+            {currencyFormatter.format(preSeedAfondPerdu)} à-fond-perdu und{" "}
+            {currencyFormatter.format(preSeedBridge)} Bridge-Wandeldarlehen — reine Dokumentation der abgeschlossenen
+            Vor-Gründungsphase, <strong>ohne Einfluss</strong> auf Cash, KPIs und Simulation.
+          </li>
+          <li>
+            <strong>Finanzierungszuflüsse im Modell:</strong> Seed bei Monat 0 (Startkapital), Series A im eingestellten
+            Monat ≥ 1.
+          </li>
+          <li>
+            <strong>KPI «Ohne / Mit Monitor/Anker»:</strong> «Ohne» = Premium-Briefings + Sponsoring (Baseline). «Mit» =
+            Gesamtmodell inkl. optionaler Monitor- und Anker-Kunde-Erlöse (Standardwerte 0 = identisch).
+          </li>
+          <li>
+            <strong>Operativer Break-even:</strong> erster Monat mit Einnahmen ≥ Personal + Sachkosten + Spezialtopf
+            (ohne Gewinnsteuer).
+          </li>
+          <li>
+            <strong>Erforderliches Kapital:</strong> Seed + Series A abzüglich tiefstem Liquiditätspuffer über den
+            Planungshorizont (100&apos;000 CHF Reserve + 3 Monate Personalkosten inkl. Sozialabgaben).
+          </li>
+        </ol>
+      </aside>
 
       {/* Tab Switcher */}
       <div className="flex border-2 border-black bg-white">
@@ -1228,16 +1625,11 @@ Zur Absicherung wurden drei Szenarien modelliert:
                       onChange={(event) => setSeedBetrag(clampNumber(Number(event.target.value)))}
                     />
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold text-black">Seed Monat</span>
-                    <input
-                      type="number"
-                      className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
-                      value={seedMonat}
-                      min={0}
-                      max={48}
-                      onChange={(event) => setSeedMonat(clampNumber(Number(event.target.value)))}
-                    />
+                  <div className="flex flex-col gap-1 justify-end">
+                    <span className="text-xs font-semibold text-black">Seed Zufluss</span>
+                    <span className="border-2 border-black bg-[#F5F5F5] px-2 py-1 text-sm font-semibold text-black">
+                      Monat 0 (Start)
+                    </span>
                   </div>
                 </div>
 
@@ -1258,43 +1650,94 @@ Zur Absicherung wurden drei Szenarien modelliert:
                       type="number"
                       className="w-full border-2 border-black bg-white px-2 py-1 text-sm font-semibold text-black transition-shadow hover:shadow-[1px_1px_0px_#000] focus:outline-none"
                       value={seriesAMonat}
-                      min={0}
+                      min={1}
                       max={48}
-                      onChange={(event) => setSeriesAMonat(clampNumber(Number(event.target.value)))}
+                      onChange={(event) => setSeriesAMonat(clampSeriesAMonat(Number(event.target.value)))}
                     />
                   </div>
                 </div>
               </div>
-              <LabeledSliderInput label="Neue Kunden/Monat Jahr 1" value={neueKundenJ1} onChange={setNeueKundenJ1} max={300} />
-              <LabeledSliderInput label="Neue Kunden/Monat Jahr 2" value={neueKundenJ2} onChange={setNeueKundenJ2} max={300} />
-              <LabeledSliderInput label="Neue Kunden/Monat Jahr 3" value={neueKundenJ3} onChange={setNeueKundenJ3} max={300} />
-              <LabeledSliderInput label="Neue Kunden/Monat Jahr 4" value={neueKundenJ4} onChange={setNeueKundenJ4} max={300} />
-              <LabeledNumberInput label="Preis pro Lizenz Jahr 1 (CHF)" value={preisJ1} onChange={setPreisJ1} step={5} />
-              <LabeledNumberInput label="Preis pro Lizenz ab Jahr 2 (CHF)" value={preisAbJ2} onChange={setPreisAbJ2} step={5} />
-              <LabeledNumberInput label="Preis pro Lizenz ab Jahr 3 (CHF)" value={preisAbJ3} onChange={setPreisAbJ3} step={5} />
-              <div className="grid gap-3">
-                <span className="text-sm font-semibold text-black">Verlängerungsraten nach Vertragsjahr</span>
-                {[
-                  ["nach 1 Jahr", verlaengerungNachJ1, setVerlaengerungNachJ1],
-                  ["nach 2 Jahren", verlaengerungNachJ2, setVerlaengerungNachJ2],
-                  ["nach 3 Jahren", verlaengerungNachJ3, setVerlaengerungNachJ3],
-                ].map(([label, val, setter]) => (
-                  <div key={label} className="grid gap-1">
-                    <div className="flex justify-between text-xs text-black">
-                      <span>Verlängerung {label}</span>
-                      <span className="font-semibold text-black">{clampPercent(val).toFixed(1)}%</span>
+              <div className="border-2 border-black bg-[#F5F5F5] p-3 space-y-3">
+                <span className="text-xs font-bold text-black uppercase block">Premium-Briefings</span>
+                <LabeledSliderInput label="Neue Lizenzen/Monat Jahr 1" value={neueKundenJ1} onChange={setNeueKundenJ1} max={300} />
+                <LabeledSliderInput label="Neue Lizenzen/Monat Jahr 2" value={neueKundenJ2} onChange={setNeueKundenJ2} max={300} />
+                <LabeledSliderInput label="Neue Lizenzen/Monat Jahr 3" value={neueKundenJ3} onChange={setNeueKundenJ3} max={300} />
+                <LabeledSliderInput label="Neue Lizenzen/Monat Jahr 4" value={neueKundenJ4} onChange={setNeueKundenJ4} max={300} />
+                <LabeledNumberInput label="Preis pro Lizenz Jahr 1 (CHF)" value={preisJ1} onChange={setPreisJ1} step={5} />
+                <LabeledNumberInput label="Preis pro Lizenz ab Jahr 2 (CHF)" value={preisAbJ2} onChange={setPreisAbJ2} step={5} />
+                <LabeledNumberInput label="Preis pro Lizenz ab Jahr 3 (CHF)" value={preisAbJ3} onChange={setPreisAbJ3} step={5} />
+                <div className="grid gap-3">
+                  <span className="text-sm font-semibold text-black">Verlängerungsraten nach Vertragsjahr</span>
+                  {[
+                    ["nach 1 Jahr", verlaengerungNachJ1, setVerlaengerungNachJ1],
+                    ["nach 2 Jahren", verlaengerungNachJ2, setVerlaengerungNachJ2],
+                    ["nach 3 Jahren", verlaengerungNachJ3, setVerlaengerungNachJ3],
+                  ].map(([label, val, setter]) => (
+                    <div key={label} className="grid gap-1">
+                      <div className="flex justify-between text-xs text-black">
+                        <span>Verlängerung {label}</span>
+                        <span className="font-semibold text-black">{clampPercent(val).toFixed(1)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={30}
+                        max={100}
+                        step={0.1}
+                        value={val}
+                        onChange={(event) => setter(clampPercent(clampNumber(Number(event.target.value))))}
+                        className="w-full accent-[#FF6B6B]"
+                      />
                     </div>
-                    <input
-                      type="range"
-                      min={30}
-                      max={100}
-                      step={0.1}
-                      value={val}
-                      onChange={(event) => setter(clampPercent(clampNumber(Number(event.target.value))))}
-                      className="w-full accent-[#FF6B6B]"
-                    />
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+              <div className="border-2 border-black bg-[#F5F5F5] p-3 space-y-3">
+                <span className="text-xs font-bold text-black uppercase block">Monitor</span>
+                <LabeledNumberInput
+                  label="Start im Monat"
+                  value={monitorStartMonat}
+                  onChange={setMonitorStartMonat}
+                  min={0}
+                  max={48}
+                  step={1}
+                />
+                <LabeledNumberInput
+                  label="Neue Lizenzen pro Monat"
+                  value={monitorNeueLizenzenProMonat}
+                  onChange={setMonitorNeueLizenzenProMonat}
+                  step={1}
+                />
+                <LabeledNumberInput
+                  label="Preis pro Lizenz (CHF)"
+                  value={monitorPreisProLizenz}
+                  onChange={setMonitorPreisProLizenz}
+                  step={5}
+                  helpText="Jahrespreis upfront · Churn = Verlängerung nach Jahr 1 (alle 12 Mon.)"
+                />
+              </div>
+              <div className="border-2 border-black bg-[#F5F5F5] p-3 space-y-3">
+                <span className="text-xs font-bold text-black uppercase block">Anker-Kunde</span>
+                <LabeledNumberInput
+                  label="Start im Monat"
+                  value={ankerStartMonat}
+                  onChange={setAnkerStartMonat}
+                  min={0}
+                  max={48}
+                  step={1}
+                />
+                <LabeledNumberInput
+                  label="Anzahl Lizenzen"
+                  value={ankerAnzahlLizenzen}
+                  onChange={setAnkerAnzahlLizenzen}
+                  step={1}
+                />
+                <LabeledNumberInput
+                  label="Preis pro Lizenz pro Monat (CHF)"
+                  value={ankerPreisProLizenz}
+                  onChange={setAnkerPreisProLizenz}
+                  step={5}
+                  helpText="Monatlicher Umsatz = Anzahl × Preis ab Startmonat."
+                />
               </div>
               <LabeledNumberInput
                 label="Sponsoring/Monat Jahr 1 (CHF)"
@@ -1555,8 +1998,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
       {activeTab === "charts" && (
         <div className="space-y-4">
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[16px] font-bold text-black">Kundenwachstum</h2>
-            <p className="text-sm font-normal text-black">Aktive Kundenentwicklung über 48 Monate.</p>
+            <h2 className="text-[16px] font-bold text-black">Lizenzwachstum</h2>
+            <p className="text-sm font-normal text-black">Aktive Lizenzen nach Briefing, Monitor und Anker-Kunde über 48 Monate.</p>
             <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={simulation} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
@@ -1568,9 +2011,9 @@ Zur Absicherung wurden drei Szenarien modelliert:
                     minTickGap={18}
                   />
                   <YAxis tick={{ fontSize: 14, fill: "#000000" }} width={56} />
-                  {breakEvenMonat != null && (
+                  {breakEvenMonatBaseline != null && (
                     <ReferenceLine
-                      x={breakEvenMonat}
+                      x={breakEvenMonatBaseline}
                       stroke="#00aa00"
                       strokeDasharray="4 4"
                       label={{ value: "Break-even", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
@@ -1583,10 +2026,26 @@ Zur Absicherung wurden drei Szenarien modelliert:
                   <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
                   <Line
                     type="monotone"
-                    dataKey="aktiveKunden"
-                    name="Aktive Kunden"
+                    dataKey="aktiveBriefing"
+                    name="Briefing"
                     stroke="#FF6B6B"
                     strokeWidth={2.5}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveMonitor"
+                    name="Monitor"
+                    stroke="#4A90D9"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="aktiveAnker"
+                    name="Anker-Kunde"
+                    stroke="#9B59B6"
+                    strokeWidth={2}
                     dot={false}
                   />
                 </LineChart>
@@ -1597,7 +2056,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
           <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[16px] font-bold text-black">Finanzen & Liquidität</h2>
             <p className="text-sm font-normal text-black">
-              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Personalkosten der nächsten 3 Monate inkl. Sozialabgaben). Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
+              Einnahmen, Ausgaben, Cashbestand und Mindestliquidität (100&apos;000 CHF + Personalkosten der nächsten 3 Monate inkl. Sozialabgaben). Baseline ohne Monitor/Anker-Kunde. Die grüne Linie markiert Break-even (Einnahmen = Ausgaben).
             </p>
             <div className="mt-4 h-[34rem] 2xl:h-[38rem]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1619,9 +2078,9 @@ Zur Absicherung wurden drei Szenarien modelliert:
                     width={92}
                     label={{ value: "Cash/Floor (CHF)", angle: 90, position: "insideRight", fill: "#000000", fontSize: 12 }}
                   />
-                  {breakEvenMonat != null && (
+                  {breakEvenMonatBaseline != null && (
                     <ReferenceLine
-                      x={breakEvenMonat}
+                      x={breakEvenMonatBaseline}
                       yAxisId="left"
                       stroke="#00aa00"
                       strokeDasharray="4 4"
@@ -1636,7 +2095,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
                   <Line
                     yAxisId="left"
                     type="monotone"
-                    dataKey="gesamteinnahmen"
+                    dataKey="baselineGesamteinnahmen"
                     name="Einnahmen"
                     stroke="#00aa00"
                     strokeWidth={2}
@@ -1645,8 +2104,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
                   <Line
                     yAxisId="left"
                     type="monotone"
-                    dataKey="gesamtausgaben"
-                    name="Ausgaben"
+                    dataKey="baselineOperativeAusgaben"
+                    name="Ausgaben (operativ)"
                     stroke="#FF2C2C"
                     strokeWidth={2}
                     dot={false}
@@ -1654,7 +2113,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
                   <Line
                     yAxisId="right"
                     type="monotone"
-                    dataKey="cashbestand"
+                    dataKey="baselineCashbestand"
                     name="Cashbestand"
                     stroke="#000000"
                     strokeWidth={2.5}
@@ -1668,6 +2127,68 @@ Zur Absicherung wurden drei Szenarien modelliert:
                     stroke="#ff9900"
                     strokeWidth={2}
                     strokeDasharray="6 4"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+
+          <article className="border-2 border-black bg-white p-4 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[16px] font-bold text-black">Zusatzeffekt Monitor & Anker-Kunde</h2>
+            <p className="text-sm font-normal text-black">
+              Mehrwert gegenüber der Baseline: zusätzliche Einnahmen und Cashbestand (inkl. Mehr-Gewinnsteuer). Der Liquiditätspuffer verbessert sich um denselben Betrag, da der Floor nur vom Personal abhängt.
+            </p>
+            <div className="mt-4 h-[28rem] 2xl:h-[32rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={simulation} margin={{ top: 12, right: 26, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cfcfcf" />
+                  <XAxis dataKey="month" tick={{ fontSize: 14, fill: "#000000" }} minTickGap={18} />
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={84}
+                    label={{ value: "Mehr-Einnahmen (CHF)", angle: -90, position: "insideLeft", fill: "#000000", fontSize: 12 }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 14, fill: "#000000" }}
+                    tickFormatter={axisCurrencyFormatter}
+                    width={92}
+                    label={{ value: "Mehr-Cash/Puffer (CHF)", angle: 90, position: "insideRight", fill: "#000000", fontSize: 12 }}
+                  />
+                  {breakEvenMonatTotal != null && (
+                    <ReferenceLine
+                      x={breakEvenMonatTotal}
+                      yAxisId="left"
+                      stroke="#00aa00"
+                      strokeDasharray="4 4"
+                      label={{ value: "BE gesamt", position: "insideTopRight", fill: "#00aa00", fontSize: 12 }}
+                    />
+                  )}
+                  <Tooltip
+                    formatter={(value, name) => [currencyFormatter.format(value), name]}
+                    labelFormatter={(label) => `Monat ${label}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 14, fontWeight: 600, color: "#000000" }} />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="deltaEinnahmen"
+                    name="Mehr-Einnahmen"
+                    stroke="#90EE90"
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="deltaCashbestand"
+                    name="Mehr-Cash / Liquiditätspuffer"
+                    stroke="#87CEEB"
+                    strokeWidth={2.5}
                     dot={false}
                   />
                 </LineChart>
@@ -1722,11 +2243,12 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
       {activeTab === "calc" && (
         <div className="space-y-4">
-          {/* Year 1 Card */}
+          {/* Premium-Briefings Year 1 */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 1</h2>
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Premium-Briefings — Jahr 1</h2>
+            <p className="text-xs text-gray-600 mb-4">Jahrespreis upfront · gestaffelte Preise ab Vertragsjahr 2/3</p>
             <p className="text-sm font-normal text-black mb-4">
-              Im ersten Jahr verkaufen wir <strong>{neueKundenJ1}</strong> Kunden pro Monat à <strong>{preisJ1} CHF</strong>.
+              Im ersten Jahr verkaufen wir <strong>{neueKundenJ1}</strong> neue Lizenzen pro Monat à <strong>{preisJ1} CHF</strong>.
             </p>
             <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
               <div>
@@ -1753,17 +2275,18 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </div>
           </article>
 
-          {/* Year 2 Card */}
+          {/* Premium-Briefings Year 2 */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 2</h2>
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Premium-Briefings — Jahr 2</h2>
+            <p className="text-xs text-gray-600 mb-4">Verlängerungen Bestandslizenzen + Neugeschäft</p>
             <p className="text-sm font-normal text-black mb-4">
-              Bestandskunden aus Jahr 1 verlängern zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
-              Neukunden im Jahr 2 (<strong>{neueKundenJ2}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
+              Bestandslizenzen aus Jahr 1 verlängern zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
+              Neue Lizenzen im Jahr 2 (<strong>{neueKundenJ2}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
             </p>
             <div className="space-y-4">
               {/* Old customers */}
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
-                <span className="font-bold text-xs uppercase text-gray-600">A) Verlängerung Bestandskunden (Jahr 1)</span>
+                <span className="font-bold text-xs uppercase text-gray-600">A) Verlängerung Bestandslizenzen (Jahr 1)</span>
                 <div>
                   <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
                   <div className="text-[15px] font-semibold mt-1">
@@ -1780,7 +2303,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
               {/* New customers */}
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
-                <span className="font-bold text-xs uppercase text-gray-600">B) Neue Kunden Jahr 2</span>
+                <span className="font-bold text-xs uppercase text-gray-600">B) Neue Lizenzen Jahr 2</span>
                 <div>
                   <span className="font-semibold text-gray-600">Verkaufte Lizenzen:</span>
                   <div className="text-[15px] font-semibold mt-1">
@@ -1807,8 +2330,8 @@ Zur Absicherung wurden drei Szenarien modelliert:
               <div className="bg-[#EBF4FF] border-2 border-black p-4 font-mono text-sm text-black">
                 <span className="font-bold text-xs uppercase text-gray-600">ARR (Annual Recurring Revenue) am Ende von Jahr 2</span>
                 <div className="mt-2 space-y-1">
-                  <div>MRR Bestandskunden: {currencyFormatter.format(calcDetails.y2_renew_rev / 12)} / Monat</div>
-                  <div>MRR Neukunden: {currencyFormatter.format(calcDetails.y2_new_rev / 12)} / Monat</div>
+                  <div>MRR Bestandslizenzen: {currencyFormatter.format(calcDetails.y2_renew_rev / 12)} / Monat</div>
+                  <div>MRR neue Lizenzen: {currencyFormatter.format(calcDetails.y2_new_rev / 12)} / Monat</div>
                   <div className="font-bold border-t border-black pt-1 mt-1">
                     Gesamt-MRR (Monat 24): {currencyFormatter.format(calcDetails.y2_total_rev / 12)} / Monat
                   </div>
@@ -1820,18 +2343,19 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </div>
           </article>
 
-          {/* Year 3 Card */}
+          {/* Premium-Briefings Year 3 */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
-            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Jahr 3</h2>
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Premium-Briefings — Jahr 3</h2>
+            <p className="text-xs text-gray-600 mb-4">Zweite/dritte Verlängerungswelle + Neugeschäft</p>
             <p className="text-sm font-normal text-black mb-4">
-              Kunden aus Jahr 1 verlängern ein zweites Mal zu <strong>{verlaengerungNachJ2}%</strong> zum Preis von <strong>{preisAbJ3} CHF</strong>.<br />
-              Kunden aus Jahr 2 verlängern das erste Mal zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
-              Neukunden im Jahr 3 (<strong>{neueKundenJ3}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
+              Lizenzen aus Jahr 1 verlängern ein zweites Mal zu <strong>{verlaengerungNachJ2}%</strong> zum Preis von <strong>{preisAbJ3} CHF</strong>.<br />
+              Lizenzen aus Jahr 2 verlängern das erste Mal zu <strong>{verlaengerungNachJ1}%</strong> zum Preis von <strong>{preisAbJ2} CHF</strong>.<br />
+              Neue Lizenzen im Jahr 3 (<strong>{neueKundenJ3}</strong>/Monat) zahlen den Erstjahr-Preis von <strong>{preisJ1} CHF</strong>.
             </p>
             <div className="space-y-4">
               {/* Original cohort renewal */}
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
-                <span className="font-bold text-xs uppercase text-gray-600">A) Zweite Verlängerung (Originalkunden Jahr 1)</span>
+                <span className="font-bold text-xs uppercase text-gray-600">A) Zweite Verlängerung (Originallizenzen Jahr 1)</span>
                 <div>
                   <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
                   <div className="text-[15px] font-semibold mt-1">
@@ -1848,7 +2372,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
               {/* Year 2 cohort renewal */}
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
-                <span className="font-bold text-xs uppercase text-gray-600">B) Erste Verlängerung (Kunden Jahr 2)</span>
+                <span className="font-bold text-xs uppercase text-gray-600">B) Erste Verlängerung (Lizenzen Jahr 2)</span>
                 <div>
                   <span className="font-semibold text-gray-600">Verlängerte Lizenzen:</span>
                   <div className="text-[15px] font-semibold mt-1">
@@ -1865,7 +2389,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
 
               {/* New customers */}
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
-                <span className="font-bold text-xs uppercase text-gray-600">C) Neue Kunden Jahr 3</span>
+                <span className="font-bold text-xs uppercase text-gray-600">C) Neue Lizenzen Jahr 3</span>
                 <div>
                   <span className="font-semibold text-gray-600">Verkaufte Lizenzen:</span>
                   <div className="text-[15px] font-semibold mt-1">
@@ -1892,9 +2416,9 @@ Zur Absicherung wurden drei Szenarien modelliert:
               <div className="bg-[#EBF4FF] border-2 border-black p-4 font-mono text-sm text-black">
                 <span className="font-bold text-xs uppercase text-gray-600">ARR (Annual Recurring Revenue) am Ende von Jahr 3</span>
                 <div className="mt-2 space-y-1">
-                  <div>MRR Originalkunden (Jahr 1): {currencyFormatter.format(calcDetails.y3_renew_orig_rev / 12)} / Monat</div>
-                  <div>MRR Bestandskunden (Jahr 2): {currencyFormatter.format(calcDetails.y3_renew_y2_rev / 12)} / Monat</div>
-                  <div>MRR Neukunden (Jahr 3): {currencyFormatter.format(calcDetails.y3_new_rev / 12)} / Monat</div>
+                  <div>MRR Originallizenzen (Jahr 1): {currencyFormatter.format(calcDetails.y3_renew_orig_rev / 12)} / Monat</div>
+                  <div>MRR Bestandslizenzen (Jahr 2): {currencyFormatter.format(calcDetails.y3_renew_y2_rev / 12)} / Monat</div>
+                  <div>MRR neue Lizenzen (Jahr 3): {currencyFormatter.format(calcDetails.y3_new_rev / 12)} / Monat</div>
                   <div className="font-bold border-t border-black pt-1 mt-1">
                     Gesamt-MRR (Monat 36): {currencyFormatter.format(calcDetails.y3_total_rev / 12)} / Monat
                   </div>
@@ -1906,57 +2430,179 @@ Zur Absicherung wurden drei Szenarien modelliert:
             </div>
           </article>
 
+          {/* Monitor */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Monitor</h2>
+            <p className="text-xs text-gray-600 mb-4">
+              Jahrespreis upfront · fester Preis · Churn = Verlängerung nach Jahr 1 ({clampPercent(verlaengerungNachJ1).toFixed(1)} %) alle 12 Monate
+            </p>
+            {!monitorCalcDetails.active ? (
+              <div className="bg-[#F5F5F5] border-2 border-black p-4 text-sm text-gray-600">
+                Deaktiviert (Start Monat, neue Lizenzen/Monat oder Preis = 0). Kein Einfluss auf Baseline-KPIs.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-black">
+                  Ab Monat <strong>{monitorCalcDetails.startMonat}</strong> werden{" "}
+                  <strong>{monitorCalcDetails.neueProMonat}</strong> neue Lizenzen/Monat à{" "}
+                  <strong>{monitorCalcDetails.preis} CHF</strong> verkauft (Upfront = Preis × 12).
+                </p>
+                {monitorCalcDetails.years.map((y) => (
+                  <div
+                    key={y.year}
+                    className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black"
+                  >
+                    <span className="font-bold text-xs uppercase text-gray-600">Geschäftsjahr {y.year}</span>
+                    <div>
+                      <span className="font-semibold text-gray-600">Neu verkaufte Lizenzen im Jahr:</span>
+                      <div className="text-[15px] font-semibold mt-1">{numberFormatter.format(y.soldInYear)}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">Summe MRR-Umsatz (GuV, 12 Monate):</span>
+                      <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                        {currencyFormatter.format(y.umsatzJahr)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">Stand Ende GJ{y.year}:</span>
+                      <div className="text-[15px] font-semibold mt-1">
+                        {numberFormatter.format(Math.round(y.endActive))} aktive Lizenzen · MRR{" "}
+                        {currencyFormatter.format(y.endMrr)} / Monat · ARR{" "}
+                        {currencyFormatter.format(y.endMrr * 12)} / Jahr
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          {/* Anker-Kunde */}
+          <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
+            <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-1">Anker-Kunde</h2>
+            <p className="text-xs text-gray-600 mb-4">Monatlicher Umsatz · kein Upfront · Cash = GuV</p>
+            {!ankerCalcDetails.active ? (
+              <div className="bg-[#F5F5F5] border-2 border-black p-4 text-sm text-gray-600">
+                Deaktiviert (Start Monat, Anzahl Lizenzen oder Preis = 0). Kein Einfluss auf Baseline-KPIs.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-black">
+                  Ab Monat <strong>{ankerCalcDetails.startMonat}</strong>:{" "}
+                  <strong>{ankerCalcDetails.lizenzen}</strong> Lizenzen ×{" "}
+                  <strong>{ankerCalcDetails.preis} CHF</strong>/Monat ={" "}
+                  <strong>{currencyFormatter.format(ankerCalcDetails.monatsMrr)}</strong> MRR (monatlich wiederkehrend).
+                </p>
+                <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                  <div>
+                    <span className="font-semibold text-gray-600">Verkaufte Lizenzen (einmalig bei Start):</span>
+                    <div className="text-[15px] font-semibold mt-1">
+                      {numberFormatter.format(ankerCalcDetails.lizenzen)} Lizenzen
+                    </div>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-gray-600">Monatlicher Umsatz & Cash ab Start:</span>
+                    <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                      {currencyFormatter.format(ankerCalcDetails.monatsMrr)} / Monat
+                    </div>
+                  </div>
+                </div>
+                {ankerCalcDetails.years.map((y) => (
+                  <div
+                    key={y.year}
+                    className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black"
+                  >
+                    <span className="font-bold text-xs uppercase text-gray-600">Geschäftsjahr {y.year}</span>
+                    <div>
+                      <span className="font-semibold text-gray-600">Monate mit Umsatz:</span>
+                      <div className="text-[15px] font-semibold mt-1">{y.monthsActive} von 12</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">Summe MRR-Umsatz (GuV):</span>
+                      <div className="text-[15px] font-semibold mt-1 text-[#00aa00]">
+                        {currencyFormatter.format(y.umsatzJahr)}
+                      </div>
+                    </div>
+                    {y.endMrr > 0 && (
+                      <div>
+                        <span className="font-semibold text-gray-600">MRR Ende GJ{y.year}:</span>
+                        <div className="text-[15px] font-semibold mt-1">
+                          {currencyFormatter.format(y.endMrr)} / Monat · ARR {currencyFormatter.format(y.endMrr * 12)} / Jahr
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
           {/* Break-even Card */}
           <article className="border-2 border-black bg-white p-6 transition-shadow hover:shadow-[2px_2px_0px_#000]">
             <h2 className="text-[18px] font-bold text-black border-b-2 border-black pb-2 mb-4">Break-even (operativ)</h2>
             <p className="text-sm font-normal text-black mb-4">
-              Der operative Break-Even ist der erste Monat, in dem die monatlichen Einnahmen (Lizenz-MRR + Sponsoring) die monatlichen Ausgaben (Personalkosten + Sachkosten) decken oder übertreffen:
-              <br />
-              <span className="font-semibold">Bedingung:</span> Einnahmen ≥ Ausgaben
+              Gesamtmodell (Premium-Briefings + Monitor + Anker-Kunde + Sponsoring). Operativer Break-Even: Einnahmen ≥
+              Personal + Sachkosten + Spezialtopf (ohne Gewinnsteuer).
             </p>
 
-            {breakEvenMonat != null && breakEvenPoint != null ? (
+            {breakEvenMonatTotal != null && breakEvenPointTotal != null ? (
               <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
                 <div className="text-[16px] font-bold text-[#00aa00] mb-2">
-                  Erreicht in Monat {breakEvenMonat} (Jahr {breakEvenPoint.year})
+                  Mit Monitor/Anker: Monat {breakEvenMonatTotal} (Jahr {breakEvenPointTotal.year})
                 </div>
+                {breakEvenMonatBaseline != null && breakEvenMonatBaseline !== breakEvenMonatTotal && (
+                  <div className="text-sm font-semibold text-gray-700">
+                    Ohne Monitor/Anker (Baseline): Monat {breakEvenMonatBaseline}
+                  </div>
+                )}
                 <div>
-                  <span className="font-semibold text-gray-600">Monatliche Einnahmen in Monat {breakEvenMonat}:</span>
+                  <span className="font-semibold text-gray-600">Monatliche Einnahmen in Monat {breakEvenMonatTotal}:</span>
                   <div className="pl-4 mt-1">
-                    Lizenz-Umsatz (MRR): {currencyFormatter.format(breakEvenPoint.umsatzLizenzen)} / Monat<br />
-                    Sponsoring: {currencyFormatter.format(breakEvenPoint.sponsoringProMonat)} / Monat<br />
-                    <span className="font-bold">Gesamteinnahmen: {currencyFormatter.format(breakEvenPoint.gesamteinnahmen)} / Monat</span>
+                    Premium-Briefings (MRR): {currencyFormatter.format(breakEvenPointTotal.umsatzLizenzen)} / Monat<br />
+                    Monitor (MRR): {currencyFormatter.format(breakEvenPointTotal.umsatzMonitor)} / Monat<br />
+                    Anker-Kunde (MRR): {currencyFormatter.format(breakEvenPointTotal.umsatzAnker)} / Monat<br />
+                    Sponsoring: {currencyFormatter.format(breakEvenPointTotal.sponsoringProMonat)} / Monat<br />
+                    <span className="font-bold">Gesamteinnahmen: {currencyFormatter.format(breakEvenPointTotal.gesamteinnahmen)} / Monat</span>
                   </div>
                 </div>
                 <hr className="border-black border-dashed" />
                 <div>
-                  <span className="font-semibold text-gray-600">Monatliche Ausgaben in Monat {breakEvenMonat}:</span>
+                  <span className="font-semibold text-gray-600">Monatliche Ausgaben in Monat {breakEvenMonatTotal}:</span>
                   <div className="pl-4 mt-1 space-y-1">
                     <div>
-                      <span className="font-semibold">Personalkosten gesamt:</span> {currencyFormatter.format(breakEvenPoint.personalkosten)} / Monat
+                      <span className="font-semibold">Personalkosten gesamt:</span> {currencyFormatter.format(breakEvenPointTotal.personalkosten)} / Monat
                       <div className="text-[12px] text-gray-600 pl-4 border-l-2 border-black ml-1 mt-0.5 font-mono">
-                        Bruttolöhne: {currencyFormatter.format(breakEvenPoint.bruttolohn)} / Monat<br />
-                        Sozialabgaben & Vorsorge ({clampPercent(sozialabgabenProzent).toFixed(1)}%): {currencyFormatter.format(breakEvenPoint.sozialabgaben)} / Monat
+                        Bruttolöhne: {currencyFormatter.format(breakEvenPointTotal.bruttolohn)} / Monat<br />
+                        Sozialabgaben & Vorsorge ({clampPercent(sozialabgabenProzent).toFixed(1)}%): {currencyFormatter.format(breakEvenPointTotal.sozialabgaben)} / Monat
                       </div>
                     </div>
-                    <div>Sachkosten: {currencyFormatter.format(breakEvenPoint.sachkosten)} / Monat</div>
-                    {breakEvenPoint.gewinnsteuer > 0 && (
-                      <div>Gewinnsteuer: {currencyFormatter.format(breakEvenPoint.gewinnsteuer)} / Monat</div>
+                    <div>Sachkosten: {currencyFormatter.format(breakEvenPointTotal.sachkosten)} / Monat</div>
+                    {breakEvenPointTotal.gewinnsteuer > 0 && (
+                      <div>Gewinnsteuer: {currencyFormatter.format(breakEvenPointTotal.gewinnsteuer)} / Monat</div>
                     )}
-                    {breakEvenPoint.spezialtopfKosten > 0 && (
+                    {breakEvenPointTotal.spezialtopfKosten > 0 && (
                       <div className="text-[12px] text-gray-600 pl-4 border-l-2 border-black ml-1 mt-0.5 font-mono">
-                        Spezialtopf-Tranche: {currencyFormatter.format(breakEvenPoint.spezialtopfKosten)} / Monat (bis Monat 36)
+                        Spezialtopf-Tranche: {currencyFormatter.format(breakEvenPointTotal.spezialtopfKosten)} / Monat (bis Monat 36)
                       </div>
                     )}
-                    <div className="font-bold pt-1 mt-1 border-t border-black">Gesamtausgaben: {currencyFormatter.format(breakEvenPoint.gesamtausgaben)} / Monat</div>
+                    <div className="font-bold pt-1 mt-1 border-t border-black">Gesamtausgaben: {currencyFormatter.format(breakEvenPointTotal.gesamtausgaben)} / Monat</div>
                   </div>
                 </div>
                 <hr className="border-black border-dashed" />
                 <div className="font-bold text-[#00aa00] text-[15px]">
                   Netto-Ergebnis (Einnahmen − operative Ausgaben): +{currencyFormatter.format(
-                    breakEvenPoint.gesamteinnahmen - breakEvenPoint.personalkosten - breakEvenPoint.sachkosten - breakEvenPoint.spezialtopfKosten
+                    breakEvenPointTotal.gesamteinnahmen - breakEvenPointTotal.personalkosten - breakEvenPointTotal.sachkosten - breakEvenPointTotal.spezialtopfKosten
                   )} / Monat
                 </div>
+              </div>
+            ) : breakEvenMonatBaseline != null && breakEvenPointBaseline != null ? (
+              <div className="grid gap-3 bg-[#F5F5F5] border-2 border-black p-4 font-mono text-sm text-black">
+                <div className="text-[16px] font-bold text-[#00aa00] mb-2">
+                  Nur Baseline (ohne Monitor/Anker): Monat {breakEvenMonatBaseline} (Jahr {breakEvenPointBaseline.year})
+                </div>
+                <p className="text-sm text-gray-700">
+                  Mit aktiviertem Monitor/Anker kein Gesamt-Break-even innerhalb von 48 Monaten — Baseline erreicht operativen Break-even in Monat {breakEvenMonatBaseline}.
+                </p>
               </div>
             ) : (
               <div className="bg-[#FFF0F0] border-2 border-black p-4 font-mono text-sm text-red-600 font-bold">
@@ -2000,11 +2646,20 @@ Zur Absicherung wurden drei Szenarien modelliert:
                     ))}
                   </tr>
                   {/* Betriebskosten Row */}
-                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
                     <td className="p-3 border-r-2 border-black font-sans font-semibold">Betriebskosten</td>
                     {kennzahlen.results.map((r) => (
                       <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center text-red-600">
                         {currencyFormatter.format(r.betriebskosten)}
+                      </td>
+                    ))}
+                  </tr>
+                  {/* Gesamtausgaben Row */}
+                  <tr className="border-b-2 border-black hover:bg-[#FAF9F6]">
+                    <td className="p-3 border-r-2 border-black font-sans font-semibold">Gesamtausgaben</td>
+                    {kennzahlen.results.map((r) => (
+                      <td key={r.year} className="p-3 border-r-2 last:border-r-0 border-black text-center text-red-600">
+                        {currencyFormatter.format(r.gesamtausgaben)}
                       </td>
                     ))}
                   </tr>
@@ -2064,6 +2719,12 @@ Zur Absicherung wurden drei Szenarien modelliert:
                 </tbody>
               </table>
             </div>
+            <p className="mt-4 border-t border-black pt-3 text-[11px] leading-relaxed text-gray-800">
+              <strong>Betriebskosten</strong> = Personal (inkl. Sozialabgaben) + Sachkosten + Spezialtopf — operativ,{" "}
+              <strong>ohne Gewinnsteuer</strong>. <strong>Gesamtausgaben</strong> = Betriebskosten + Gewinnsteuer (nur
+              bei positivem Monatsergebnis). <strong>EBITA</strong> = Jahres-Gesamteinnahmen − Betriebskosten.
+              Net Burn und Cash Runway basieren auf cashwirksamen Einnahmen gegenüber den Gesamtausgaben.
+            </p>
           </article>
 
           {/* Explanation Section */}
@@ -2080,13 +2741,19 @@ Zur Absicherung wurden drei Szenarien modelliert:
                 <div>
                   <span className="font-bold block">Betriebskosten</span>
                   <span className="text-xs text-gray-700 leading-tight font-mono">
-                    Summe aller Betriebsausgaben (Personalkosten inkl. Sozialabgaben, Sachkosten und Spezialtopf-Tranchen) des jeweiligen Jahres.
+                    Summe Personal (inkl. Sozialabgaben), Sachkosten und Spezialtopf — ohne Gewinnsteuer.
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold block">Gesamtausgaben</span>
+                  <span className="text-xs text-gray-700 leading-tight font-mono">
+                    Betriebskosten plus Gewinnsteuer in profitablen Monaten.
                   </span>
                 </div>
                 <div>
                   <span className="font-bold block">EBITA</span>
                   <span className="text-xs text-gray-700 leading-tight font-mono">
-                    Operatives Gesamtergebnis vor Zinsen, Steuern und Abschreibungen (Einnahmen minus Betriebskosten).
+                    Operatives Jahresergebnis vor Gewinnsteuer: Gesamteinnahmen minus Betriebskosten.
                   </span>
                 </div>
               </div>
@@ -2148,14 +2815,14 @@ Zur Absicherung wurden drei Szenarien modelliert:
               9.1 Investitionsplan
             </h3>
             <p className="text-sm text-black leading-relaxed mb-4">
-              Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom der Produktlaunch hin zu Sales.
+              Die Investitionen von Attaché konzentrieren sich in der Aufbauphase konsequent auf den technologischen Vorsprung und den Ausbau des proprietären Moats. Mit fortschreitender Finanzierung verschiebt sich der Fokus vom Produktlaunch hin zu Sales und Skalierung der Erlösströme Premium-Briefings, Monitor und Anker-Kunden-Lösungen.
             </p>
             <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
               <li>
-                <strong>Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech):</strong> Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und des ersten Bezahlbreifings (Investitionsvolumen: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(seedBetrag)}</span>).
+                <strong>Pre-Seed- & Seed-Investitionen (Produkt & Core-Tech):</strong> Überführung der Prototypen („Seismo“ und „Magnitu“) in den Live-Betrieb, Launch des Gratis Briefings und Premium-Briefings (Bezahlprodukt), Aufbau der Monitor-Plattform (Investitionsvolumen: CHF <Highlight>{numberFormatter.format(seedBetrag)}</Highlight>).
               </li>
               <li>
-                <strong>Series A*</strong> Ausbau des publizistischen Angebots auf insgesamt drei Bezahlbreifings sowie sowie Härtung der technischen Infrastruktur und redaktionelle Konsolidierung. (Investitionsvolumen: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(seriesABetrag)}</span>).
+                <strong>Series A:</strong> Skalierung von Premium-Briefings und Monitor, Härtung der technischen Infrastruktur für Enterprise-Angebote (Anker-Kunde), redaktionelle Konsolidierung und Ausbau des Vertriebs (Investitionsvolumen: CHF <Highlight>{numberFormatter.format(seriesABetrag)}</Highlight>).
               </li>
             </ul>
 
@@ -2183,17 +2850,78 @@ Zur Absicherung wurden drei Szenarien modelliert:
             <p className="text-sm text-black leading-relaxed mb-4">
               Die Umsatzgenerierung erfolgt primär über wiederkehrende B2B-Lizenzerlöse (ARR) mit jährlicher Vorauszahlung.
             </p>
-            <ul className="list-disc pl-5 mb-6 text-sm text-black space-y-2">
-              <li>
-                <strong>Seed-Phase (Jahr <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">1</span> bis <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seriesAYear}</span>):</strong> Fokus auf die Schweiz. Erreichen von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(Math.round(dummyData.seedActiveLizenzen))}</span> aktiven Lizenzen über ca. <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.seedAccounts}</span> B2B-Accounts zu einem rabattierten Einstiegspreis von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preisJ1 * 12)}</span> pro Lizenz/Jahr (ARR-Ziel: CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{(dummyData.seedARR / 1000000).toFixed(2)}</span> Mio.).
-              </li>
-              <li>
-                <strong>Series A-Phase (ab Jahr 2):</strong> Schrittweise Harmonisierung auf den regulären Zielpreis von CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(preisAbJ3 * 12)}</span> pro Lizenz/Jahr*. Durch die Erschliessung neuer Themen-Nischen (vertikale Skalierung) und den Eintritt in den DACH-Raum (horizontale Skalierung) steigt das Absatzvolumen auf 3'103 Lizenzen (ARR-Ziel: CHF 2.69 Mio.).
-              </li>
-              <li>
-                <strong>Zusatz-Umsätze:</strong> Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sponsoringJahr1 * 12)}</span> pro Jahr bei. Ab dem 2. Geschäftsjahr sind es <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{numberFormatter.format(sponsoringJahr2 * 12)}</span> CHF pro Jahr.
-              </li>
-            </ul>
+            <div className="mb-6 space-y-4 text-sm text-black">
+              <div>
+                <p className="font-bold mb-2">
+                  Seed-Phase (Jahr <Highlight>1</Highlight> bis <Highlight>{dummyData.seriesAYear}</Highlight>)
+                </p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>
+                    <strong>Premium-Briefings:</strong> Erreichen von{" "}
+                    <Highlight>{numberFormatter.format(Math.round(dummyData.seedBriefingActive))}</Highlight> aktiven Lizenzen
+                    über ca. <Highlight>{dummyData.seedBriefingAccounts}</Highlight> B2B-Accounts zu einem rabattierten
+                    Einstiegspreis von CHF <Highlight>{numberFormatter.format(dummyData.seedBriefingPriceAnnual)}</Highlight> pro
+                    Lizenz/Jahr.
+                  </li>
+                  <li>
+                    <strong>Monitor:</strong> Erreichen von{" "}
+                    <Highlight>{numberFormatter.format(Math.round(dummyData.seedMonitorActive))}</Highlight> aktiven Lizenzen zum
+                    Preis von CHF <Highlight>{numberFormatter.format(dummyData.monitorPriceAnnual)}</Highlight> pro Lizenz/Jahr.
+                  </li>
+                  <li>
+                    <strong>ARR-Ziel:</strong> CHF <Highlight>{formatArrMio(dummyData.seedArr)}</Highlight> Mio., zu{" "}
+                    <Highlight>{dummyData.seedArrBriefingPct}</Highlight> Prozent aus Premium-Briefings und zu{" "}
+                    <Highlight>{dummyData.seedArrMonitorPct}</Highlight> Prozent aus Monitor.
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-bold mb-2">
+                  Series A-Phase (Jahr <Highlight>{dummyData.seriesAStartYear}</Highlight> bis <Highlight>3</Highlight>)
+                </p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>
+                    <strong>Premium-Briefings:</strong> Schrittweise Harmonisierung auf den regulären Zielpreis von CHF{" "}
+                    <Highlight>{numberFormatter.format(dummyData.targetBriefingPriceAnnual)}</Highlight> pro Lizenz/Jahr. Durch die
+                    Erschliessung neuer Themen-Nischen (vertikale Skalierung) steigt das Absatzvolumen auf{" "}
+                    <Highlight>{numberFormatter.format(dummyData.briefingSoldY3)}</Highlight> Lizenzen. Ende Jahr 2 sind{" "}
+                    <Highlight>{numberFormatter.format(Math.round(dummyData.briefingActiveY2))}</Highlight> Lizenzen aktiv. Ende Jahr
+                    3 sind <Highlight>{numberFormatter.format(Math.round(dummyData.briefingActiveY3))}</Highlight> Lizenzen aktiv.
+                  </li>
+                  <li>
+                    <strong>Monitor:</strong> Das Absatzvolumen steigt auf{" "}
+                    <Highlight>{numberFormatter.format(dummyData.monitorSoldY3)}</Highlight> Lizenzen zum Preis von CHF{" "}
+                    <Highlight>{numberFormatter.format(dummyData.monitorPriceAnnual)}</Highlight> pro Lizenz/Jahr. Ende Jahr 2 sind{" "}
+                    <Highlight>{numberFormatter.format(Math.round(dummyData.monitorActiveY2))}</Highlight> Lizenzen aktiv. Ende Jahr
+                    3 sind <Highlight>{numberFormatter.format(Math.round(dummyData.monitorActiveY3))}</Highlight> Lizenzen aktiv.
+                  </li>
+                  <li>
+                    <strong>ARR-Ziel:</strong> CHF <Highlight>{formatArrMio(dummyData.seriesAArr)}</Highlight> Mio., zu{" "}
+                    <Highlight>{dummyData.seriesAArrBriefingPct}</Highlight> Prozent aus Premium-Briefings und zu{" "}
+                    <Highlight>{dummyData.seriesAArrMonitorPct}</Highlight> Prozent aus Monitor.
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-bold mb-2">Zusatz-Umsätze</p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>
+                    Ab dem 1. Geschäftsjahr steuern exklusive, limitierte B2B-Sponsoringfenster planbar CHF{" "}
+                    <Highlight>{numberFormatter.format(dummyData.sponsoringY1Annual)}</Highlight> pro Jahr bei. Ab dem 2.
+                    Geschäftsjahr sind es <Highlight>{numberFormatter.format(dummyData.sponsoringY2Annual)}</Highlight> CHF pro Jahr.
+                  </li>
+                  <li>
+                    <strong>Anker-Kunde:</strong> Akquise eines Kunden im Monat{" "}
+                    <Highlight>{dummyData.ankerStartMonat > 0 ? dummyData.ankerStartMonat : "—"}</Highlight> mit einer
+                    Spezialdienstleistung von{" "}
+                    <Highlight>
+                      {dummyData.ankerMonthly > 0 ? currencyFormatter.format(dummyData.ankerMonthly) : "—"}
+                    </Highlight>{" "}
+                    pro Monat.
+                  </li>
+                </ul>
+              </div>
+            </div>
 
             <h3 className="text-[18px] font-bold text-black border-b-2 border-black pb-1 mb-4">
               9.4 Plan-Gewinn- & Verlustrechnung (GuV)
@@ -2213,10 +2941,22 @@ Zur Absicherung wurden drei Szenarien modelliert:
                 </thead>
                 <tbody className="font-mono text-xs text-black">
                   <tr className="border-b border-black hover:bg-[#FAF9F6] font-sans">
-                    <td className="p-2 border-r-2 border-black font-bold">Umsatzerlöse (ARR Lizenzen)</td>
+                    <td className="p-2 border-r-2 border-black font-bold">Umsatzerlöse Premium-Briefings</td>
                     <td className="p-2 border-r-2 border-black text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].umsatzLizenzen))}</td>
                     <td className="p-2 border-r-2 border-black text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].umsatzLizenzen))}</td>
                     <td className="p-2 text-center font-bold text-blue-600 bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].umsatzLizenzen))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">Umsatzerlöse Monitor</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].umsatzMonitor))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].umsatzMonitor))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].umsatzMonitor))}</td>
+                  </tr>
+                  <tr className="border-b border-black hover:bg-[#FAF9F6]">
+                    <td className="p-2 border-r-2 border-black">Umsatzerlöse Anker-Kunde</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[1].umsatzAnker))}</td>
+                    <td className="p-2 border-r-2 border-black text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[2].umsatzAnker))}</td>
+                    <td className="p-2 text-center bg-yellow-50">{numberFormatter.format(Math.round(guvData[3].umsatzAnker))}</td>
                   </tr>
                   <tr className="border-b border-black hover:bg-[#FAF9F6]">
                     <td className="p-2 border-r-2 border-black">Erlöse B2B-Sponsoring / Events</td>
@@ -2331,14 +3071,49 @@ Zur Absicherung wurden drei Szenarien modelliert:
               9.10 Break-Even-Analyse & Szenarien
             </h3>
             <p className="text-sm text-black leading-relaxed mb-4">
-              Die Gewinnschwelle (Schweizer Break-Even) wird plangemäss im <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.breakEvenYear}.</span> Geschäftsjahr bei Erreichen von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{breakEvenPoint != null ? numberFormatter.format(Math.round(breakEvenPoint.aktiveKunden)) : "—"}</span> Lizenzen überschritten. Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
+              Die Gewinnschwelle (operativer Break-Even: Einnahmen ≥ Personal + Sachkosten + Spezialtopf, ohne Gewinnsteuer) wird plangemäss wie folgt erreicht:
+            </p>
+            <ul className="list-disc pl-5 mb-4 text-sm text-black space-y-2">
+              <li>
+                <strong>Ohne Monitor/Anker (Baseline):</strong>{" "}
+                {breakEvenMonatBaseline != null && breakEvenPointBaseline != null ? (
+                  <>
+                    im <Highlight>{yearByMonth(breakEvenMonatBaseline)}.</Highlight> Geschäftsjahr (Monat{" "}
+                    <Highlight>{breakEvenMonatBaseline}</Highlight>) bei{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointBaseline.aktiveBriefing))}</Highlight> Premium-Briefings,{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointBaseline.aktiveMonitor))}</Highlight> Monitor,{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointBaseline.aktiveAnker))}</Highlight> Anker-Kunde (gesamt{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointBaseline.aktiveKunden))}</Highlight> Lizenzen aktiv).
+                  </>
+                ) : (
+                  <>innerhalb von 48 Monaten nicht erreicht.</>
+                )}
+              </li>
+              <li>
+                <strong>Mit Monitor/Anker (Gesamtmodell):</strong>{" "}
+                {breakEvenMonatTotal != null && breakEvenPointTotal != null ? (
+                  <>
+                    im <Highlight>{yearByMonth(breakEvenMonatTotal)}.</Highlight> Geschäftsjahr (Monat{" "}
+                    <Highlight>{breakEvenMonatTotal}</Highlight>) bei{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointTotal.aktiveBriefing))}</Highlight> Premium-Briefings,{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointTotal.aktiveMonitor))}</Highlight> Monitor,{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointTotal.aktiveAnker))}</Highlight> Anker-Kunde (gesamt{" "}
+                    <Highlight>{numberFormatter.format(Math.round(breakEvenPointTotal.aktiveKunden))}</Highlight> Lizenzen aktiv).
+                  </>
+                ) : (
+                  <>innerhalb von 48 Monaten nicht erreicht.</>
+                )}
+              </li>
+            </ul>
+            <p className="text-sm text-black leading-relaxed mb-4">
+              Die Series A-Finanzierung dient danach als Wachstumsbeschleuniger, um die Profitabilität auf internationaler Ebene zu replizieren.
             </p>
             <p className="text-sm text-black leading-relaxed mb-4">
               Zur Absicherung wurden drei Szenarien modelliert:
             </p>
             <ul className="list-disc pl-5 text-sm text-black space-y-2">
               <li>
-                <strong>Base Case (Erwarteter Verlauf):</strong> Erreichen des Schweizer Break-Even nach <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.baseCaseMonths}</span> Monaten. Erfolgreiches Series A-Closing im Monat <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{seriesAMonat}</span> und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.ebitMargeY3}</span> % im Jahr <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">3</span>.
+                <strong>Base Case (Erwarteter Verlauf):</strong> Erreichen des Schweizer Break-Even nach <Highlight>{dummyData.baseCaseMonths}</Highlight> Monaten (Gesamtmodell). Erfolgreiches Series A-Closing im Monat <Highlight>{seriesAMonat}</Highlight> und anschliessender internationaler Rollout mit einer Ziel-EBIT-Marge von <Highlight>{dummyData.ebitMargeY3}</Highlight> % im Jahr <Highlight>3</Highlight>.
               </li>
               <li>
                 <strong>Best Case (Skalierungs-Turbo):</strong> Extrem hohe Marktdurchdringung im ersten Jahr über direkte B2B2B-Verbandsrahmenverträge (Low CAC). Der Schweizer Markt trägt sich bereits nach <span className="bg-[#FFE600] text-black font-bold px-1 border border-black">{dummyData.bestCaseMonths}</span> Monaten selbst. Die Series A-Runde kann zu einer deutlich höheren Unternehmensbewertung als ursprünglich veranschlagt durchgeführt werden.
@@ -2363,7 +3138,7 @@ Zur Absicherung wurden drei Szenarien modelliert:
               (Bruttolohn + Sozialabgaben, nur dann aktive Rollen). Sachkosten sind dabei nicht enthalten.
             </p>
             <p>
-              <span className="font-semibold">Preislogik:</span> Kunden zahlen im ersten Vertragsjahr den Jahr-1-Preis, im zweiten
+              <span className="font-semibold">Preislogik:</span> Lizenzen zahlen im ersten Vertragsjahr den Jahr-1-Preis, im zweiten
               Vertragsjahr den Preis ab Jahr 2 und ab dem dritten Vertragsjahr den Preis ab Jahr 3.
             </p>
           </div>
