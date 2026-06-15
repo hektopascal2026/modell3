@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:plesk": "VITE_BASE_PATH=/ vite build",
+    "build:subdir": "VITE_BASE_PATH=/modell3/ vite build",
+    "build:modell4": "VITE_BASE_PATH=/modell4/ vite build",
+    "deploy:modell4": "DEPLOY_SUBPATH=modell4 ./scripts/deploy-seismo.sh",
     "lint": "eslint .",
     "preview": "vite preview"
   },
