@@ -1,4 +1,4 @@
-# Modell 3 — Apache (Shared Hosting, Unterordner /modell3/)
+# Modell 4 — Apache (Shared Hosting, Unterordner /modell4/)
 DirectoryIndex index.php index.html
 Options -MultiViews +FollowSymLinks
 
@@ -12,7 +12,7 @@ Options -MultiViews +FollowSymLinks
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteBase /modell3/
+  RewriteBase /modell4/
 
   # API + statische Szenario-Datei nicht an SPA umleiten
   RewriteRule ^api/ - [L]

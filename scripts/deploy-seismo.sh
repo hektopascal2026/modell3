@@ -12,7 +12,7 @@ cd "$ROOT"
 VITE_BASE_PATH="${BASE_PATH}" npm run build
 
 if [[ -f dist/.htaccess ]]; then
-  perl -pi -e "s|RewriteBase /modell3/|RewriteBase ${BASE_PATH}|g" dist/.htaccess dist/htaccess-upload.txt 2>/dev/null || true
+  perl -pi -e "s|RewriteBase /modell4/|RewriteBase ${BASE_PATH}|g" dist/.htaccess dist/htaccess-upload.txt 2>/dev/null || true
 fi
 
 echo "→ Upload nach ${HOST}:${TARGET} …"

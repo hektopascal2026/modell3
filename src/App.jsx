@@ -153,6 +153,11 @@ const formatActiveLicensesPlain = (point, numberFormatter) => {
   return `${numberFormatter.format(Math.round(point.aktiveBriefing))} Premium-Briefings, ${numberFormatter.format(Math.round(point.aktiveMonitor))} Monitor, ${numberFormatter.format(Math.round(point.aktiveAnker))} Anker-Kunde (gesamt ${numberFormatter.format(Math.round(point.aktiveKunden))} Lizenzen aktiv)`;
 };
 
+const formatBaselineActiveLicensesPlain = (point, numberFormatter) => {
+  if (!point) return "—";
+  return `${numberFormatter.format(Math.round(point.aktiveBriefing))} Premium-Briefings aktiv`;
+};
+
 const buildBreakEvenAnalysePlain = ({
   breakEvenYearBaseline,
   breakEvenMonatBaseline,
@@ -167,7 +172,7 @@ const buildBreakEvenAnalysePlain = ({
 }) => {
   const baselineLine =
     breakEvenMonatBaseline != null
-      ? `Ohne Monitor/Anker (Baseline): im ${breakEvenYearBaseline}. Geschäftsjahr (Monat ${breakEvenMonatBaseline}) bei ${formatActiveLicensesPlain(breakEvenPointBaseline, numberFormatter)}.`
+      ? `Ohne Monitor/Anker (Baseline): im ${breakEvenYearBaseline}. Geschäftsjahr (Monat ${breakEvenMonatBaseline}) bei ${formatBaselineActiveLicensesPlain(breakEvenPointBaseline, numberFormatter)}.`
       : "Ohne Monitor/Anker (Baseline): innerhalb von 48 Monaten nicht erreicht.";
   const totalLine =
     breakEvenMonatTotal != null
@@ -405,7 +410,18 @@ function App() {
     if (data.ankerStartMonat !== undefined) setAnkerStartMonat(data.ankerStartMonat);
     if (data.ankerPreisProLizenz !== undefined) setAnkerPreisProLizenz(data.ankerPreisProLizenz);
     if (data.ankerAnzahlLizenzen !== undefined) setAnkerAnzahlLizenzen(data.ankerAnzahlLizenzen);
-    if (data.roles !== undefined) setRoles(data.roles);
+    if (data.roles !== undefined) {
+      setRoles(
+        data.roles.map((role) => {
+          const next = {
+            ...role,
+            monthsY4: role.monthsY4 ?? role.monthsY3 ?? 0,
+          };
+          next.startMonth = deriveRoleStartMonth(next);
+          return next;
+        }),
+      );
+    }
     if (data.sachkostenItems !== undefined) setSachkostenItems(normalizeSachkosten(data.sachkostenItems));
     if (data.sozialabgabenProzent !== undefined) setSozialabgabenProzent(data.sozialabgabenProzent);
     if (data.gewinnsteuerRate !== undefined) setGewinnsteuerRate(data.gewinnsteuerRate);
@@ -623,8 +639,14 @@ function App() {
 
       for (let i = 0; i < monitorCohorts.length; i += 1) {
         monitorCohorts[i].age += 1;
-        if (monitorCohorts[i].age === 12 || monitorCohorts[i].age === 24 || monitorCohorts[i].age === 36) {
+        if (monitorCohorts[i].age === 12) {
           monitorCohorts[i].size *= renew1;
+        }
+        if (monitorCohorts[i].age === 24) {
+          monitorCohorts[i].size *= renew2;
+        }
+        if (monitorCohorts[i].age === 36) {
+          monitorCohorts[i].size *= renew3;
         }
       }
 
@@ -1004,9 +1026,19 @@ function App() {
     return `Briefing ${numberFormatter.format(Math.round(point.aktiveBriefing))} · Monitor ${numberFormatter.format(Math.round(point.aktiveMonitor))} · Anker ${numberFormatter.format(Math.round(point.aktiveAnker))}`;
   };
 
+  const formatBaselineLicenseSplit = (point) => {
+    if (!point) return "—";
+    return `Briefing ${numberFormatter.format(Math.round(point.aktiveBriefing))}`;
+  };
+
   const formatAboSplit = (point) => {
     if (!point) return "—";
     return `Briefing ${numberFormatter.format(point.verkaufteAbosBriefing)} · Monitor ${numberFormatter.format(point.verkaufteAbosMonitor)} · Anker ${numberFormatter.format(point.verkaufteAbosAnker)}`;
+  };
+
+  const formatBaselineAboSplit = (point) => {
+    if (!point) return "—";
+    return `Briefing ${numberFormatter.format(point.verkaufteAbosBriefing)}`;
   };
 
   const erforderlichesKapitalTotal = Math.max(0, seedBetrag + seriesABetrag - kapitalAnalyse.minPuffer);
@@ -1437,7 +1469,7 @@ ${buildBreakEvenAnalysePlain({
           entries={[
             {
               label: `Ohne Monitor/Anker${breakEvenMonatBaseline != null ? ` (Monat ${breakEvenMonatBaseline})` : ""}`,
-              value: formatLicenseSplit(breakEvenPointBaseline),
+              value: formatBaselineLicenseSplit(breakEvenPointBaseline),
             },
             {
               label: `Mit Monitor/Anker${breakEvenMonatTotal != null ? ` (Monat ${breakEvenMonatTotal})` : ""}`,
@@ -1451,7 +1483,7 @@ ${buildBreakEvenAnalysePlain({
           entries={[
             {
               label: `Ohne Monitor/Anker${breakEvenMonatBaseline != null ? ` (Monat ${breakEvenMonatBaseline})` : ""}`,
-              value: formatAboSplit(breakEvenPointBaseline),
+              value: formatBaselineAboSplit(breakEvenPointBaseline),
             },
             {
               label: `Mit Monitor/Anker${breakEvenMonatTotal != null ? ` (Monat ${breakEvenMonatTotal})` : ""}`,

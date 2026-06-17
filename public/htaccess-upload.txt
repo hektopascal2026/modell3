@@ -10,7 +10,7 @@ Options -MultiViews +FollowSymLinks
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteBase /modell3/
+  RewriteBase /modell4/
   RewriteRule ^api/ - [L]
   RewriteRule ^scenarios/ - [L]
   RewriteRule ^assets/ - [L]
